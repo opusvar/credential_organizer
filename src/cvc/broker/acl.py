@@ -7,7 +7,7 @@ ACL file (YAML) shape:
         token_sha256: "<hex sha256 of the agent's service token>"
         allow:
           - credential: "acme-portal-login"    # vault item name or id
-            purposes: ["pay-invoice"]          # optional; [] or omitted = any purpose
+            purposes: ["pay-invoice"]          # required; [] or omitted = DENY ALL; ["*"] = any purpose
       playwright-signup:
         token_sha256: "..."
         allow: []                              # explicitly nothing
@@ -15,6 +15,8 @@ ACL file (YAML) shape:
 Rules enforced:
 - Unknown agent  -> deny.
 - Agent with no matching allow entry for the credential -> deny.
+- `purposes` empty/None/missing -> deny all.
+- `purposes: ["*"]` -> any purpose allowed.
 - Purpose list present and request purpose not in it -> deny.
 Nothing is allowed implicitly.
 """
