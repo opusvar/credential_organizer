@@ -65,7 +65,13 @@ class AuditLog:
         return digest
 
     def verify(self) -> bool:
-        """Recompute the chain; return False if any link is broken (tamper-evident)."""
+        """Recompute the chain; return False if any link is broken (tamper-evident).
+
+        Also returns False — never raises — if any line is malformed, truncated,
+        or not a dict. emptyDir volumes silently destroy the log; verify() returning
+        True on an absent file is intentional (no log = no tampering to detect),
+        but the log must be on durable storage (PVC, not emptyDir).
+        """
         prev = GENESIS
         if not self.path.exists():
             return True
@@ -76,12 +82,14 @@ class AuditLog:
                     continue
                 try:
                     rec = json.loads(line)
-                except json.JSONDecodeError:
+                    if not isinstance(rec, dict):
+                        return False
+                    expect = rec.get("hash")
+                    check = {k: rec[k] for k in ("ts", "agent", "credential", "purpose", "outcome", "prev")}
+                    digest = hashlib.sha256((prev + json.dumps(check, sort_keys=True)).encode()).hexdigest()
+                    if rec.get("prev") != prev or digest != expect:
+                        return False
+                    prev = expect
+                except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
                     return False
-                expect = rec.get("hash")
-                check = {k: rec[k] for k in ("ts", "agent", "credential", "purpose", "outcome", "prev")}
-                digest = hashlib.sha256((prev + json.dumps(check, sort_keys=True)).encode()).hexdigest()
-                if rec.get("prev") != prev or digest != expect:
-                    return False
-                prev = expect
         return True
