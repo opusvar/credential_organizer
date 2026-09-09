@@ -1,17 +1,20 @@
 # Broker ACL — default-deny. An agent may fetch ONLY credentials explicitly listed here, for
 # the listed purposes. Unknown agents and unlisted credentials are denied.
 #
-# token_sha256 = sha256 hex of the agent's service token (store the raw token in the agent's
-# own secret store, never here). Generate: printf '%s' "<token>" | sha256sum
+# Rules:
+#   credential   = Vaultwarden item UUID (not the item name). Get it from `bw get item <name> | jq .id`.
+#   purposes     = required non-empty list. [] or omitted = DENY ALL. ["*"] = any purpose allowed.
+#   token_sha256 = sha256 hex of the agent's service token. Generate:
+#                    python -m cvc.broker.tokens   (prints token + sha256)
 #
-# This is an EXAMPLE with a placeholder hash — replace before use. Keep real ACLs out of git if
+# This is a TEMPLATE with placeholder values — replace before use. Keep real ACLs out of git if
 # they reveal which high-value credentials exist (this file is committed as a template only).
 agents:
   playwright-example:
     token_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
     allow:
-      - credential: "example-portal-login"   # vault item name or id
-        purposes: ["smoke-test"]              # omit/empty = any purpose (discouraged)
+      - credential: "00000000-0000-0000-0000-000000000000"   # replace with real Vaultwarden item UUID
+        purposes: ["smoke-test"]
   playwright-locked:
     token_sha256: "1111111111111111111111111111111111111111111111111111111111111111"
-    allow: []                                  # explicitly nothing
+    allow: []                                                 # explicitly nothing
