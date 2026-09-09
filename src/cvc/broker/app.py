@@ -19,10 +19,16 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
+import logging as _logging
+
 from .. import config
 from ..vault.client import BwClient, VaultError
 from .acl import Acl
 from .audit import AuditEvent, AuditLog
+
+_log = _logging.getLogger(__name__)
+
+_MAX_BODY = 8 * 1024  # 8 KB
 
 app = FastAPI(
     title="cvc credential broker",
@@ -51,7 +57,9 @@ def _acl() -> Acl:
     try:
         return Acl.load(_cfg().broker_acl)
     except FileNotFoundError:
-        # No ACL file => nothing is permitted (fail closed).
+        return Acl({})
+    except Exception:
+        _log.exception("ACL load failed — failing closed")
         return Acl({})
 
 
@@ -61,20 +69,6 @@ def _audit() -> AuditLog:
 
 def _bw() -> BwClient:
     return BwClient(server=_cfg().bw_server or "")
-
-
-_MAX_BODY = 8 * 1024  # 8 KB
-
-
-@app.middleware("http")
-async def _body_size_limit(request: Request, call_next):
-    content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > _MAX_BODY:
-        return Response(status_code=413, content="Request body too large")
-    body = await request.body()
-    if len(body) > _MAX_BODY:
-        return Response(status_code=413, content="Request body too large")
-    return await call_next(request)
 
 
 # ── models ───────────────────────────────────────────────────────────────────
@@ -97,6 +91,19 @@ class FetchResponse(BaseModel):
     value: str
 
 
+# ── middleware ───────────────────────────────────────────────────────────────
+@app.middleware("http")
+async def _limit_body_size(request: Request, call_next):
+    content_length = request.headers.get("content-length")
+    try:
+        if content_length and int(content_length) > _MAX_BODY:
+            return Response(status_code=413, content="Request body too large")
+    except ValueError:
+        pass  # malformed Content-Length; fall through to measured check
+    response = await call_next(request)
+    return response
+
+
 # ── endpoints ────────────────────────────────────────────────────────────────
 @app.get("/healthz", tags=["meta"], summary="Liveness probe")
 def healthz() -> dict:
@@ -105,7 +112,7 @@ def healthz() -> dict:
 
 @app.get("/v1/audit/verify", tags=["audit"], summary="Verify audit-log integrity")
 def audit_verify(
-    x_agent_id: str = Header(..., description="Calling agent's id."),
+    x_agent_id: str = Header(..., max_length=64, description="Calling agent's id."),
     authorization: str = Header(..., description="Bearer <agent service token>."),
     acl: Acl = Depends(_acl),
 ) -> dict:
@@ -122,7 +129,7 @@ def audit_verify(
           summary="Fetch a credential field (default-deny, audited)")
 def fetch_credential(
     req: FetchRequest,
-    x_agent_id: str = Header(..., description="Calling agent's id."),
+    x_agent_id: str = Header(..., max_length=64, description="Calling agent's id."),
     authorization: str = Header(..., description="Bearer <agent service token>."),
     acl: Acl = Depends(_acl),
     audit: AuditLog = Depends(_audit),
