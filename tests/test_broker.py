@@ -217,3 +217,118 @@ def test_broker_field_length_enforced(tmp_path):
         headers={"x-agent-id": "agent1", "authorization": "Bearer goodtoken"},
     )
     assert r.status_code == 422
+
+
+# ── B5: core invariant — audit written before secret returned ─────────────────
+
+def test_fetch_denied_writes_deny_audit(tmp_path):
+    """403 deny must be recorded in the audit log with outcome starting 'deny:'."""
+    gen = _make_app_client(tmp_path)
+    client, _ = next(gen)
+    ungranted = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    r = client.post(
+        "/v1/credentials/fetch",
+        json={"credential": ungranted, "purpose": "test"},
+        headers={"x-agent-id": "agent1", "authorization": "Bearer goodtoken"},
+    )
+    assert r.status_code == 403
+
+    audit_path = tmp_path / "audit.jsonl"
+    lines = [l for l in audit_path.read_text().splitlines() if l.strip()]
+    assert len(lines) == 1, f"Expected 1 audit record, got {len(lines)}"
+    rec = json.loads(lines[0])
+    assert rec["outcome"].startswith("deny:"), f"Expected deny outcome, got {rec['outcome']!r}"
+    assert rec["credential"] == ungranted
+    assert rec["agent"] == "agent1"
+
+
+def test_fetch_allowed_writes_allow_audit_before_vault(tmp_path):
+    """Allowed credential: audit record 'allow' is written even if vault returns an error."""
+    gen = _make_app_client(tmp_path)
+    client, valid_uuid = next(gen)
+    r = client.post(
+        "/v1/credentials/fetch",
+        json={"credential": valid_uuid, "purpose": "test"},
+        headers={"x-agent-id": "agent1", "authorization": "Bearer goodtoken"},
+    )
+    # Vault isn't available in tests so expect 502 (VaultError) or any non-auth error.
+    assert r.status_code not in (401, 403), f"Should not be rejected at auth/authz, got {r.status_code}"
+
+    audit_path = tmp_path / "audit.jsonl"
+    lines = [l for l in audit_path.read_text().splitlines() if l.strip()]
+    assert len(lines) == 1, f"Expected 1 audit record, got {len(lines)}"
+    rec = json.loads(lines[0])
+    assert rec["outcome"] == "allow", f"Expected 'allow', got {rec['outcome']!r}"
+    assert rec["credential"] == valid_uuid
+    assert rec["agent"] == "agent1"
+
+
+# ── B1 complement: verify() must return False, not raise, on tampered lines ───
+
+@pytest.mark.xfail(
+    strict=False,
+    reason="BUG: verify() raises KeyError instead of returning False when a required field is missing",
+)
+def test_verify_missing_field_returns_false_not_raises(tmp_path):
+    """Deleting a required field from a valid JSON record must return False, not KeyError."""
+    log = AuditLog(str(tmp_path / "chain.jsonl"))
+    log.record(AuditEvent(agent="a1", credential="cred", purpose="p", outcome="allow"))
+
+    p = tmp_path / "chain.jsonl"
+    rec = json.loads(p.read_text().strip())
+    del rec["agent"]  # remove a field that verify() references
+    p.write_text(json.dumps(rec) + "\n")
+
+    result = log.verify()
+    assert result is False
+
+
+@pytest.mark.xfail(
+    strict=False,
+    reason="BUG: verify() raises AttributeError instead of returning False for non-object JSON",
+)
+def test_verify_non_object_json_returns_false_not_raises(tmp_path):
+    """A line with valid non-object JSON (e.g. 123) must return False, not AttributeError."""
+    log = AuditLog(str(tmp_path / "chain2.jsonl"))
+    log.record(AuditEvent(agent="a1", credential="cred", purpose="p", outcome="allow"))
+
+    p = tmp_path / "chain2.jsonl"
+    # Replace the entire log with a non-object JSON value.
+    p.write_text("123\n")
+
+    result = log.verify()
+    assert result is False
+
+
+# ── B4: ACL null token_sha256 must return False, not raise TypeError ──────────
+
+@pytest.mark.xfail(
+    strict=False,
+    reason="BUG: authenticate() raises TypeError when token_sha256 is None",
+)
+def test_acl_authenticate_null_token_sha256_returns_false():
+    """token_sha256: null in ACL must cause authenticate() to return False, not raise."""
+    acl = Acl({
+        "agents": {
+            "a_null": {
+                "token_sha256": None,
+                "allow": [],
+            }
+        }
+    })
+    result = acl.authenticate("a_null", "anytoken")
+    assert result is False
+
+
+def test_acl_authenticate_missing_token_sha256_returns_false():
+    """Missing token_sha256 key must cause authenticate() to return False, not raise."""
+    acl = Acl({
+        "agents": {
+            "a_missing": {
+                "allow": [],
+                # token_sha256 key absent entirely
+            }
+        }
+    })
+    result = acl.authenticate("a_missing", "anytoken")
+    assert result is False
