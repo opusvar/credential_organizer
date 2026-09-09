@@ -72,16 +72,17 @@ class Acl:
         agent = self._agents.get(agent_id)
         if not agent:
             return False
-        expected = agent.get("token_sha256", "")
-        got = _sha256(token)
+        expected = str(agent.get("token_sha256") or "").strip().lower()
+        got = _sha256(token).lower()
         return hmac.compare_digest(expected, got)
 
     def authorize(self, agent_id: str, credential: str, purpose: str) -> Decision:
         agent = self._agents.get(agent_id)
         if not agent:
             return Decision(False, "unknown agent")
+        credential = credential.lower()
         for entry in agent.get("allow", []) or []:
-            if entry.get("credential") != credential:
+            if (entry.get("credential") or "").lower() != credential:
                 continue
             purposes = entry.get("purposes") or []
             if "*" in purposes or purpose in purposes:
