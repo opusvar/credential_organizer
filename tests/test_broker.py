@@ -58,6 +58,19 @@ def test_audit_append_and_verify(tmp_path):
     assert not log.verify()
 
 
+def test_audit_verify_corrupt_json_line(tmp_path):
+    """A non-JSON line in the log must cause verify() to return False, not raise."""
+    log = AuditLog(str(tmp_path / "corrupt.jsonl"))
+    log.record(AuditEvent(agent="a1", credential="c", purpose="p", outcome="allow"))
+
+    p = tmp_path / "corrupt.jsonl"
+    p.write_text(p.read_text() + "NOT JSON\n")
+
+    # Must return False, never raise.
+    result = log.verify()
+    assert result is False
+
+
 # ── new: concurrency ──────────────────────────────────────────────────────────
 
 def test_audit_concurrent_writes_verify(tmp_path):
