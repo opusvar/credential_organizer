@@ -192,6 +192,22 @@ def test_broker_audit_verify_requires_auth(tmp_path):
     assert r.json()["intact"] is True
 
 
+def test_broker_body_size_limit(tmp_path):
+    gen = _make_app_client(tmp_path)
+    client, _ = next(gen)
+    oversized_body = "x" * (9 * 1024)  # 9 KB > 8 KB limit
+    r = client.post(
+        "/v1/credentials/fetch",
+        content=oversized_body,
+        headers={
+            "x-agent-id": "agent1",
+            "authorization": "Bearer goodtoken",
+            "content-type": "application/json",
+        },
+    )
+    assert r.status_code == 413
+
+
 def test_broker_field_length_enforced(tmp_path):
     gen = _make_app_client(tmp_path)
     client, _ = next(gen)
