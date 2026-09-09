@@ -1,0 +1,45 @@
+# ── SECRETS & CREDENTIAL DATA — never commit ────────────────────────────────
+# This project handles plaintext credential exports and vault sessions. Nothing
+# under these patterns may ever enter git.
+.env
+.env.*
+!.env.example
+*.env
+# Plaintext exports from source password stores (Keychain/Chrome/etc.)
+exports/
+*.csv
+*.tsv
+*.1pif
+*.json.plain
+# Vault sessions / keys / tokens
+*.session
+bw_session*
+*.key
+*.pem
+service-tokens/
+# Backups (encrypted or not) and recovery material
+backups/
+*.backup
+*.enc
+recovery/
+# Audit logs containing real access records
+audit/*.log
+audit/*.jsonl
+!audit/.gitkeep
+
+# ── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+
+# ── Editor / OS ─────────────────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/

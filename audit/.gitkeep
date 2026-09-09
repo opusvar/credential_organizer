@@ -1,0 +1,2 @@
+# Runtime audit logs (*.jsonl / *.log) are written here and are gitignored.
+# This .gitkeep keeps the directory present in the repo.

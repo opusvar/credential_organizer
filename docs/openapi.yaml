@@ -1,0 +1,86 @@
+# Static OpenAPI spec for the credential broker.
+# HAND-MAINTAINED STUB — regenerate from the live app with `make openapi` (which dumps
+# cvc.broker.app:app.openapi()). Kept in git so the API contract is reviewable without running
+# the service (per the OpenAPI documentation standard for HTTP-API projects).
+openapi: 3.1.0
+info:
+  title: cvc credential broker
+  version: 0.0.0
+  description: >-
+    Brokers least-privilege, purpose-bound, audited access to specific Vaultwarden credentials
+    for automation agents. Default-deny; every access is recorded before a secret is returned.
+    SCAFFOLD: secret retrieval is not yet implemented (returns 501).
+tags:
+  - name: credentials
+    description: Request a specific credential for a stated purpose.
+  - name: audit
+    description: Audit-log integrity.
+  - name: meta
+    description: Health and readiness.
+paths:
+  /healthz:
+    get:
+      tags: [meta]
+      summary: Liveness probe
+      responses:
+        "200":
+          description: Service is up.
+  /v1/audit/verify:
+    get:
+      tags: [audit]
+      summary: Verify audit-log integrity
+      responses:
+        "200":
+          description: Chain check result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  intact: { type: boolean }
+  /v1/credentials/fetch:
+    post:
+      tags: [credentials]
+      summary: Fetch a credential (default-deny, audited)
+      parameters:
+        - in: header
+          name: X-Agent-Id
+          required: true
+          schema: { type: string }
+        - in: header
+          name: Authorization
+          required: true
+          schema: { type: string }
+          description: "Bearer <agent service token>"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FetchRequest" }
+      responses:
+        "200":
+          description: Grant decision (secret delivery TBD — pending security review).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FetchResponse" }
+        "401": { description: Authentication failed. }
+        "403": { description: Denied by ACL (unknown agent, unlisted credential, or purpose). }
+        "501": { description: Secret retrieval not implemented (scaffold). }
+components:
+  schemas:
+    FetchRequest:
+      type: object
+      required: [credential, purpose]
+      properties:
+        credential: { type: string, description: Vault item name or id. }
+        purpose: { type: string, description: Why the agent needs it (bound + logged). }
+    FetchResponse:
+      type: object
+      required: [credential, granted, detail]
+      properties:
+        credential: { type: string }
+        granted: { type: boolean }
+        detail: { type: string }
+      description: >-
+        The raw secret is intentionally absent in v0; delivery mechanism (one-time token vs
+        inline, TTL) is a Phase-4 decision pending security review.
