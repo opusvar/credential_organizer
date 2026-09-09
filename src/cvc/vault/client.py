@@ -13,6 +13,7 @@ Design rules:
 from __future__ import annotations
 
 import json
+import logging as _logging
 import os
 import subprocess
 from dataclasses import dataclass
@@ -30,14 +31,15 @@ def _session() -> str:
 
 
 _BW = "/usr/local/bin/bw"
+_ENV_BASE = {"HOME", "USER", "TMPDIR", "LANG", "LC_ALL", "PATH"}
+_vault_log = _logging.getLogger(__name__)
 
-_ENV_PASSTHROUGH = {"HOME", "USER", "TMPDIR", "LANG", "LC_ALL", "PATH",
-                    "BW_CLIENTID", "BW_CLIENTSECRET", "BW_PASSWORD"}
 
-
-def _run(*args: str, session: str | None = None) -> str:
+def _run(*args: str, session: str | None = None,
+         extra_env: set[str] | None = None) -> str:
     """Run a bw subcommand and return stdout. Raises VaultError on non-zero exit."""
-    env: dict[str, str] = {k: v for k, v in os.environ.items() if k in _ENV_PASSTHROUGH}
+    allowed = _ENV_BASE | (extra_env or set())
+    env: dict[str, str] = {k: v for k, v in os.environ.items() if k in allowed}
     if session:
         env["BW_SESSION"] = session
     try:
@@ -50,8 +52,11 @@ def _run(*args: str, session: str | None = None) -> str:
         )
     except FileNotFoundError as exc:
         raise VaultError("bw CLI not found — install Bitwarden CLI") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise VaultError("bw command timed out") from exc
     if result.returncode != 0:
-        raise VaultError(f"bw {args[0]} failed (exit {result.returncode}): {result.stderr.strip()}")
+        _vault_log.error("bw %s failed (exit %d)", args[0], result.returncode)
+        raise VaultError("vault command failed")
     return result.stdout.strip()
 
 
@@ -72,7 +77,7 @@ class BwClient:
         """
         if not os.environ.get("BW_CLIENTID") or not os.environ.get("BW_CLIENTSECRET"):
             raise VaultError("BW_CLIENTID and BW_CLIENTSECRET must be set for API key login")
-        _run("login", "--apikey")
+        _run("login", "--apikey", extra_env={"BW_CLIENTID", "BW_CLIENTSECRET"})
 
     def unlock(self) -> str:
         """Unlock the vault with BW_PASSWORD and return the session key.
@@ -83,7 +88,8 @@ class BwClient:
         """
         if not os.environ.get("BW_PASSWORD"):
             raise VaultError("BW_PASSWORD must be set to unlock the vault")
-        raw = _run("unlock", "--passwordenv", "BW_PASSWORD", "--raw")
+        raw = _run("unlock", "--passwordenv", "BW_PASSWORD", "--raw",
+                   extra_env={"BW_PASSWORD"})
         return raw
 
     def sync(self) -> None:
