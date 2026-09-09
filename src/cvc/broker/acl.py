@@ -21,6 +21,7 @@ Nothing is allowed implicitly.
 from __future__ import annotations
 
 import hashlib
+import hmac
 from dataclasses import dataclass
 
 import yaml
@@ -50,14 +51,13 @@ class Acl:
             return cls(yaml.safe_load(fh) or {})
 
     def authenticate(self, agent_id: str, token: str) -> bool:
-        """Constant-ish-time token check against the stored sha256 for this agent."""
+        """Constant-time token check against the stored sha256 for this agent."""
         agent = self._agents.get(agent_id)
         if not agent:
             return False
         expected = agent.get("token_sha256", "")
         got = _sha256(token)
-        # hmac.compare_digest-style; length differs -> False
-        return len(expected) == len(got) and all(a == b for a, b in zip(expected, got))
+        return hmac.compare_digest(expected, got)
 
     def authorize(self, agent_id: str, credential: str, purpose: str) -> Decision:
         agent = self._agents.get(agent_id)

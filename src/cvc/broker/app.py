@@ -88,6 +88,8 @@ def fetch_credential(
     acl: Acl = Depends(_acl),
     audit: AuditLog = Depends(_audit),
 ) -> FetchResponse:
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=400, detail="Authorization header must use Bearer scheme")
     token = authorization.removeprefix("Bearer ").strip()
 
     # 1. Authenticate.
