@@ -1,0 +1,51 @@
+---
+# cvc-backup CronJob — exports an encrypted vault snapshot and prunes old exports.
+# Runs weekly on Sunday at 02:00 UTC.
+#
+# Prerequisites:
+#   kubectl create secret generic cvc-vault  (same secret as cvc-remind)
+#
+#   kubectl create pvc cvc-backups (or substitute a hostPath / NFS volume below)
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cvc-backup
+  namespace: cvc
+spec:
+  schedule: "0 2 * * 0"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: cvc-backup
+              image: cvc:latest
+              command: ["cvc-backup"]
+              envFrom:
+                - secretRef:
+                    name: cvc-vault
+              env:
+                - name: BACKUP_DIR
+                  value: /backups
+                - name: BACKUP_RETENTION_DAYS
+                  value: "30"
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 200m
+                  memory: 128Mi
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: cvc-backups

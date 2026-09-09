@@ -1,0 +1,57 @@
+---
+# cvc-remind CronJob — evaluates vault credentials and publishes to Home Assistant via MQTT.
+# Runs daily at 07:00 UTC. Adjust schedule as needed.
+#
+# Prerequisites:
+#   kubectl create secret generic cvc-vault \
+#     --from-literal=BW_SERVER=https://orangepi6.humpback-krait.ts.net:8443 \
+#     --from-literal=BW_CLIENTID=<from Vaultwarden Account Settings → API Key> \
+#     --from-literal=BW_CLIENTSECRET=<from Vaultwarden Account Settings → API Key> \
+#     --from-literal=BW_PASSWORD=<vault master password>
+#
+#   kubectl create secret generic cvc-mqtt \
+#     --from-literal=MQTT_HOST=<HA MQTT broker host> \
+#     --from-literal=MQTT_USERNAME=<mqtt username> \
+#     --from-literal=MQTT_PASSWORD=<mqtt password>
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cvc-remind
+  namespace: cvc
+spec:
+  schedule: "0 7 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: cvc-remind
+              image: cvc:latest
+              command: ["cvc-remind"]
+              envFrom:
+                - secretRef:
+                    name: cvc-vault
+                - secretRef:
+                    name: cvc-mqtt
+              env:
+                - name: ROTATION_MAX_AGE_DAYS
+                  value: "180"
+                - name: HIBP_ENABLED
+                  value: "true"
+                - name: MQTT_PORT
+                  value: "1883"
+                - name: MQTT_DISCOVERY_PREFIX
+                  value: "homeassistant"
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 200m
+                  memory: 128Mi
