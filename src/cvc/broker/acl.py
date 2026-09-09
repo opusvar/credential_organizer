@@ -22,9 +22,16 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
+import uuid as _uuid_mod
 from dataclasses import dataclass
 
 import yaml
+
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
 
 
 class Denied(Exception):
@@ -48,7 +55,15 @@ class Acl:
     @classmethod
     def load(cls, path: str) -> "Acl":
         with open(path, encoding="utf-8") as fh:
-            return cls(yaml.safe_load(fh) or {})
+            data = yaml.safe_load(fh) or {}
+        for agent_id, agent in (data.get("agents") or {}).items():
+            for entry in agent.get("allow", []) or []:
+                cred = entry.get("credential", "")
+                if not _UUID_RE.match(cred):
+                    raise ValueError(
+                        f"ACL agent '{agent_id}': credential '{cred}' is not a UUID"
+                    )
+        return cls(data)
 
     def authenticate(self, agent_id: str, token: str) -> bool:
         """Constant-time token check against the stored sha256 for this agent."""
@@ -66,8 +81,8 @@ class Acl:
         for entry in agent.get("allow", []) or []:
             if entry.get("credential") != credential:
                 continue
-            purposes = entry.get("purposes")
-            if purposes and purpose not in purposes:
-                return Decision(False, f"purpose '{purpose}' not permitted for {credential}")
-            return Decision(True, "explicit allow")
+            purposes = entry.get("purposes") or []
+            if "*" in purposes or purpose in purposes:
+                return Decision(True, "explicit allow")
+            return Decision(False, f"purpose '{purpose}' not permitted for {credential}")
         return Decision(False, f"no allow entry for credential '{credential}'")

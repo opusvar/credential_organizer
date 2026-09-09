@@ -14,7 +14,8 @@ static copy with `make openapi` (writes docs/openapi.yaml).
 """
 from __future__ import annotations
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from .. import config
@@ -34,6 +35,9 @@ app = FastAPI(
         {"name": "audit", "description": "Audit-log integrity."},
         {"name": "meta", "description": "Health and readiness."},
     ],
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 
@@ -53,10 +57,29 @@ def _audit() -> AuditLog:
     return AuditLog(_cfg().audit_log)
 
 
+_MAX_BODY = 8 * 1024  # 8 KB
+
+
+@app.middleware("http")
+async def _body_size_limit(request: Request, call_next):
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > _MAX_BODY:
+        return Response(status_code=413, content="Request body too large")
+    body = await request.body()
+    if len(body) > _MAX_BODY:
+        return Response(status_code=413, content="Request body too large")
+    return await call_next(request)
+
+
 # ── models ───────────────────────────────────────────────────────────────────
+_MAX_FIELD = 256
+
+
 class FetchRequest(BaseModel):
-    credential: str = Field(..., description="Vault item name or id the agent needs.")
-    purpose: str = Field(..., description="Why the agent needs it (bound + logged).")
+    credential: str = Field(..., max_length=_MAX_FIELD,
+                            description="Vault item UUID the agent needs.")
+    purpose: str = Field(..., max_length=_MAX_FIELD,
+                         description="Why the agent needs it (bound + logged).")
 
 
 class FetchResponse(BaseModel):
@@ -74,8 +97,17 @@ def healthz() -> dict:
 
 
 @app.get("/v1/audit/verify", tags=["audit"], summary="Verify audit-log integrity")
-def audit_verify() -> dict:
+def audit_verify(
+    x_agent_id: str = Header(..., description="Calling agent's id."),
+    authorization: str = Header(..., description="Bearer <agent service token>."),
+    acl: Acl = Depends(_acl),
+) -> dict:
     """Recompute the audit hash chain; `intact: false` means the log was altered/truncated."""
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=400, detail="Authorization header must use Bearer scheme")
+    token = authorization.removeprefix("Bearer ").strip()
+    if not acl.authenticate(x_agent_id, token):
+        raise HTTPException(status_code=401, detail="authentication failed")
     return {"intact": _audit().verify()}
 
 

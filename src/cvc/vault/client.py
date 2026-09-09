@@ -29,17 +29,24 @@ def _session() -> str:
     return val
 
 
+_BW = "/usr/local/bin/bw"
+
+_ENV_PASSTHROUGH = {"HOME", "USER", "TMPDIR", "LANG", "LC_ALL", "PATH",
+                    "BW_CLIENTID", "BW_CLIENTSECRET", "BW_PASSWORD"}
+
+
 def _run(*args: str, session: str | None = None) -> str:
     """Run a bw subcommand and return stdout. Raises VaultError on non-zero exit."""
-    env = os.environ.copy()
+    env: dict[str, str] = {k: v for k, v in os.environ.items() if k in _ENV_PASSTHROUGH}
     if session:
         env["BW_SESSION"] = session
     try:
         result = subprocess.run(
-            ["bw", *args],
+            [_BW, *args],
             capture_output=True,
             text=True,
             env=env,
+            timeout=30,
         )
     except FileNotFoundError as exc:
         raise VaultError("bw CLI not found — install Bitwarden CLI") from exc

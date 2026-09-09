@@ -7,6 +7,7 @@ Ship the log off-box for durability (out of scope here).
 """
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -48,15 +49,19 @@ class AuditLog:
 
     def record(self, ev: AuditEvent) -> str:
         """Append one chained, fsync'd record. Returns the new chain hash."""
-        prev = self._last_hash()
-        body = {"ts": ev.ts, "agent": ev.agent, "credential": ev.credential,
-                "purpose": ev.purpose, "outcome": ev.outcome, "prev": prev}
-        digest = hashlib.sha256((prev + json.dumps(body, sort_keys=True)).encode()).hexdigest()
-        body["hash"] = digest
         with self.path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(body) + "\n")
-            fh.flush()
-            os.fsync(fh.fileno())
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            try:
+                prev = self._last_hash()
+                body = {"ts": ev.ts, "agent": ev.agent, "credential": ev.credential,
+                        "purpose": ev.purpose, "outcome": ev.outcome, "prev": prev}
+                digest = hashlib.sha256((prev + json.dumps(body, sort_keys=True)).encode()).hexdigest()
+                body["hash"] = digest
+                fh.write(json.dumps(body) + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
         return digest
 
     def verify(self) -> bool:
@@ -69,7 +74,10 @@ class AuditLog:
                 line = line.strip()
                 if not line:
                     continue
-                rec = json.loads(line)
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    return False
                 expect = rec.get("hash")
                 check = {k: rec[k] for k in ("ts", "agent", "credential", "purpose", "outcome", "prev")}
                 digest = hashlib.sha256((prev + json.dumps(check, sort_keys=True)).encode()).hexdigest()
