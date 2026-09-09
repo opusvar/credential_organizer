@@ -48,7 +48,7 @@ def load() -> Config:
         mqtt_username=_get("MQTT_USERNAME"),
         mqtt_discovery_prefix=_get("MQTT_DISCOVERY_PREFIX", "homeassistant"),
         rotation_max_age_days=int(_get("ROTATION_MAX_AGE_DAYS", "180")),
-        hibp_enabled=_get("HIBP_ENABLED", "false").lower() == "true",
+        hibp_enabled=_get("HIBP_ENABLED", "true").lower() == "true",
         backup_dir=_get("BACKUP_DIR", "./backups"),
         backup_retention_days=int(_get("BACKUP_RETENTION_DAYS", "30")),
         broker_bind=_get("BROKER_BIND", "127.0.0.1"),

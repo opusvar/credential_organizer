@@ -8,7 +8,7 @@ def test_defaults_when_unset(monkeypatch):
     cfg = config.load()
     assert cfg.broker_port == 8710
     assert cfg.rotation_max_age_days == 180
-    assert cfg.hibp_enabled is False
+    assert cfg.hibp_enabled is True
     assert cfg.broker_bind == "127.0.0.1"
 
 

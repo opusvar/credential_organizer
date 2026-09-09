@@ -11,8 +11,8 @@ access log.
 > component that touches real secrets is built. The Playwright broker (Phase 4) additionally
 > requires an Opus security review before it ships.
 
-Project state tracker (checkpoint): `../../local-reference/credential-vault-consolidation/checkpoint.md`
-Depends on: the OPi auth stack — `../../local-reference/opi-auth/checkpoint.md`.
+Project state tracker (checkpoint): `~/projectTracking/ai/credential-vault-consolidation/checkpoint.md`
+Depends on: the OPi auth stack (Vaultwarden on k3s).
 
 ## Layout
 
