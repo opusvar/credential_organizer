@@ -18,6 +18,7 @@ dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.5", "mypy>=1.10"]
 [project.scripts]
 cvc-import = "cvc.importers.__main__:main"
 cvc-remind = "cvc.reminders.__main__:main"
+cvc-backup = "cvc.backup.__main__:main"
 cvc-broker = "cvc.broker.app:main"
 
 [build-system]
