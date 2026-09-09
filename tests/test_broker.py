@@ -265,10 +265,6 @@ def test_fetch_allowed_writes_allow_audit_before_vault(tmp_path):
 
 # ── B1 complement: verify() must return False, not raise, on tampered lines ───
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="BUG: verify() raises KeyError instead of returning False when a required field is missing",
-)
 def test_verify_missing_field_returns_false_not_raises(tmp_path):
     """Deleting a required field from a valid JSON record must return False, not KeyError."""
     log = AuditLog(str(tmp_path / "chain.jsonl"))
@@ -283,10 +279,6 @@ def test_verify_missing_field_returns_false_not_raises(tmp_path):
     assert result is False
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="BUG: verify() raises AttributeError instead of returning False for non-object JSON",
-)
 def test_verify_non_object_json_returns_false_not_raises(tmp_path):
     """A line with valid non-object JSON (e.g. 123) must return False, not AttributeError."""
     log = AuditLog(str(tmp_path / "chain2.jsonl"))
@@ -302,10 +294,6 @@ def test_verify_non_object_json_returns_false_not_raises(tmp_path):
 
 # ── B4: ACL null token_sha256 must return False, not raise TypeError ──────────
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="BUG: authenticate() raises TypeError when token_sha256 is None",
-)
 def test_acl_authenticate_null_token_sha256_returns_false():
     """token_sha256: null in ACL must cause authenticate() to return False, not raise."""
     acl = Acl({
