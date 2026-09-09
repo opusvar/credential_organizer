@@ -3,22 +3,24 @@
 Least-privilege access for Playwright agents. Every request is:
   1. authenticated (agent id + bearer token, checked against the ACL),
   2. authorized (default-deny, per-credential, purpose-bound),
-  3. AUDITED (append-only, chained) BEFORE any secret would be returned.
+  3. AUDITED (append-only, chained) BEFORE any secret is returned.
 
-SCAFFOLD: the ACL + audit path is real; actual secret retrieval is stubbed (returns 501) until
-the Phase-4 decisions in docs/DECISIONS.md (esp. D5 isolation) are settled and an Opus security
-review is done. Do NOT wire real secret delivery before that review.
+Secrets are delivered inline with Cache-Control: no-store. OpenAPI/docs
+endpoints are disabled. Body size is capped at 8 KB.
 
-OpenAPI is served automatically at /openapi.json (Swagger UI /docs, ReDoc /redoc); export a
-static copy with `make openapi` (writes docs/openapi.yaml).
+Requires: a dedicated Vaultwarden agent account (D5), BW_SESSION set in
+the environment (unlock managed externally — see broker-deployment.yaml).
 """
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from .. import config
+from ..vault.client import BwClient, VaultError
 from .acl import Acl
 from .audit import AuditEvent, AuditLog
 
@@ -57,6 +59,10 @@ def _audit() -> AuditLog:
     return AuditLog(_cfg().audit_log)
 
 
+def _bw() -> BwClient:
+    return BwClient(server=_cfg().bw_server or "")
+
+
 _MAX_BODY = 8 * 1024  # 8 KB
 
 
@@ -80,14 +86,15 @@ class FetchRequest(BaseModel):
                             description="Vault item UUID the agent needs.")
     purpose: str = Field(..., max_length=_MAX_FIELD,
                          description="Why the agent needs it (bound + logged).")
+    field: Literal["password", "username", "totp"] = Field(
+        "password", description="Which field to return."
+    )
 
 
 class FetchResponse(BaseModel):
     credential: str
-    granted: bool
-    # NOTE: the secret is intentionally NOT in this schema yet. Delivery mechanism
-    # (one-time token vs inline, TTL) is a Phase-4 decision pending security review.
-    detail: str
+    field: str
+    value: str
 
 
 # ── endpoints ────────────────────────────────────────────────────────────────
@@ -111,15 +118,16 @@ def audit_verify(
     return {"intact": _audit().verify()}
 
 
-@app.post("/v1/credentials/fetch", response_model=FetchResponse, tags=["credentials"],
-          summary="Fetch a credential (default-deny, audited)")
+@app.post("/v1/credentials/fetch", tags=["credentials"],
+          summary="Fetch a credential field (default-deny, audited)")
 def fetch_credential(
     req: FetchRequest,
     x_agent_id: str = Header(..., description="Calling agent's id."),
     authorization: str = Header(..., description="Bearer <agent service token>."),
     acl: Acl = Depends(_acl),
     audit: AuditLog = Depends(_audit),
-) -> FetchResponse:
+    bw: BwClient = Depends(_bw),
+) -> JSONResponse:
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=400, detail="Authorization header must use Bearer scheme")
     token = authorization.removeprefix("Bearer ").strip()
@@ -141,10 +149,22 @@ def fetch_credential(
     audit.record(AuditEvent(agent=x_agent_id, credential=req.credential,
                             purpose=req.purpose, outcome="allow"))
 
-    # 4. Retrieve — stubbed until D5 + security review.
-    raise HTTPException(
-        status_code=501,
-        detail="secret retrieval not implemented (pending D5 isolation + Opus security review)",
+    # 4. Retrieve the requested field from the vault.
+    try:
+        if req.field == "totp":
+            from ..vault.client import _run, _session
+            value = _run("get", "totp", req.credential, session=_session())
+        else:
+            item = bw.get_item(req.credential)
+            login = item.get("login") or {}
+            value = login.get(req.field) or ""
+    except VaultError as exc:
+        # Never echo the exception message — it may contain vault state.
+        raise HTTPException(status_code=502, detail="vault retrieval failed") from exc
+
+    return JSONResponse(
+        content={"credential": req.credential, "field": req.field, "value": value},
+        headers={"Cache-Control": "no-store"},
     )
 
 
