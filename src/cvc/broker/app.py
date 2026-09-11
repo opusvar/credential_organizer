@@ -93,6 +93,24 @@ class FetchResponse(BaseModel):
 
 # ── middleware ───────────────────────────────────────────────────────────────
 @app.middleware("http")
+async def _request_log(request: Request, call_next):
+    import time as _time
+    t0 = _time.monotonic()
+    response = await call_next(request)
+    _log.info(
+        "request",
+        extra={
+            "method": request.method,
+            "path": request.url.path,
+            "status": response.status_code,
+            "agent": request.headers.get("x-agent-id", "-"),
+            "duration_ms": round((_time.monotonic() - t0) * 1000),
+        },
+    )
+    return response
+
+
+@app.middleware("http")
 async def _limit_body_size(request: Request, call_next):
     content_length = request.headers.get("content-length")
     try:
