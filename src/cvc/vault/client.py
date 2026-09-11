@@ -16,6 +16,7 @@ import json
 import logging as _logging
 import os
 import subprocess
+import time as _time
 from dataclasses import dataclass
 
 
@@ -42,6 +43,7 @@ def _run(*args: str, session: str | None = None,
     env: dict[str, str] = {k: v for k, v in os.environ.items() if k in allowed}
     if session:
         env["BW_SESSION"] = session
+    t0 = _time.monotonic()
     try:
         result = subprocess.run(
             [_BW, *args],
@@ -54,9 +56,21 @@ def _run(*args: str, session: str | None = None,
         raise VaultError("bw CLI not found — install Bitwarden CLI") from exc
     except subprocess.TimeoutExpired as exc:
         raise VaultError("bw command timed out") from exc
+    elapsed_ms = round((_time.monotonic() - t0) * 1000)
     if result.returncode != 0:
-        _vault_log.error("bw %s failed (exit %d)", args[0], result.returncode)
+        _vault_log.error(
+            "bw_failed",
+            extra={
+                "subcommand": args[0],
+                "exit_code": result.returncode,
+                "elapsed_ms": elapsed_ms,
+            },
+        )
         raise VaultError("vault command failed")
+    _vault_log.debug(
+        "bw_ok",
+        extra={"subcommand": args[0], "elapsed_ms": elapsed_ms},
+    )
     return result.stdout.strip()
 
 
