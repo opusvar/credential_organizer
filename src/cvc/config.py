@@ -36,6 +36,7 @@ class Config:
     broker_bind: str
     broker_port: int
     audit_log: str
+    ops_log: str
     broker_acl: str
 
 
@@ -54,5 +55,6 @@ def load() -> Config:
         broker_bind=_get("BROKER_BIND", "127.0.0.1"),
         broker_port=int(_get("BROKER_PORT", "8710")),
         audit_log=_get("AUDIT_LOG", "./audit/access.jsonl"),
+        ops_log=_get("OPS_LOG", "./audit/ops.jsonl"),
         broker_acl=_get("BROKER_ACL", "./deploy/broker-acl.yaml"),
     )

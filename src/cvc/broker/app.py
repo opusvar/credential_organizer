@@ -25,6 +25,7 @@ from .. import config
 from ..vault.client import BwClient, VaultError
 from .acl import Acl
 from .audit import AuditEvent, AuditLog
+from .ops_log import OpsLog
 
 _log = _logging.getLogger(__name__)
 
@@ -75,6 +76,10 @@ def _bw() -> BwClient:
     return BwClient(server=_cfg().bw_server or "")
 
 
+def _ops() -> OpsLog:
+    return OpsLog(_cfg().ops_log)
+
+
 # ── models ───────────────────────────────────────────────────────────────────
 _MAX_FIELD = 256
 
@@ -101,15 +106,25 @@ async def _request_log(request: Request, call_next):
     import time as _time
     t0 = _time.monotonic()
     response = await call_next(request)
+    duration_ms = round((_time.monotonic() - t0) * 1000)
+    agent = request.headers.get("x-agent-id", "-")
     _log.info(
         "request",
         extra={
             "method": request.method,
             "path": request.url.path,
             "status": response.status_code,
-            "agent": request.headers.get("x-agent-id", "-"),
-            "duration_ms": round((_time.monotonic() - t0) * 1000),
+            "agent": agent,
+            "duration_ms": duration_ms,
         },
+    )
+    _ops().record(
+        "request",
+        method=request.method,
+        path=request.url.path,
+        status=response.status_code,
+        agent=agent,
+        duration_ms=duration_ms,
     )
     return response
 
