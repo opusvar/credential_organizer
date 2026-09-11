@@ -13,6 +13,7 @@ the environment (unlock managed externally — see broker-deployment.yaml).
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -31,7 +32,33 @@ _log = _logging.getLogger(__name__)
 
 _MAX_BODY = 8 * 1024  # 8 KB
 
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    cfg = _cfg()
+    acl = _acl()
+    _log.info(
+        "broker_started",
+        extra={
+            "broker_bind": cfg.broker_bind,
+            "broker_port": cfg.broker_port,
+            "acl_path": cfg.broker_acl,
+            "audit_log": cfg.audit_log,
+            "ops_log": cfg.ops_log,
+            "acl_entries": len(acl._agents),
+        },
+    )
+    _ops().record(
+        "broker_started",
+        broker_bind=cfg.broker_bind,
+        broker_port=cfg.broker_port,
+        acl_entries=len(acl._agents),
+    )
+    yield
+
+
 app = FastAPI(
+    lifespan=_lifespan,
     title="cvc credential broker",
     version="0.0.0",
     description=(
