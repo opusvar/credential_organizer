@@ -59,7 +59,11 @@ def _acl() -> Acl:
     except FileNotFoundError:
         return Acl({})
     except Exception:
-        _log.exception("ACL load failed — failing closed")
+        _log.error(
+            "acl_load_failed",
+            extra={"path": _cfg().broker_acl},
+            exc_info=True,
+        )
         return Acl({})
 
 
