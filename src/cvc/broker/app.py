@@ -188,7 +188,14 @@ def fetch_credential(
             login = item.get("login") or {}
             value = login.get(req.field) or ""
     except VaultError as exc:
-        # Never echo the exception message — it may contain vault state.
+        _log.error(
+            "vault_retrieval_failed",
+            extra={
+                "agent": x_agent_id,
+                "credential": req.credential,
+                "field": req.field,
+            },
+        )
         raise HTTPException(status_code=502, detail="vault retrieval failed") from exc
 
     return JSONResponse(
