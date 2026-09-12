@@ -3,36 +3,48 @@
 These block real implementation. Each has a status: **OPEN** (needs Nathan) / DECIDED / DEFERRED.
 Record the decision + date inline as they resolve.
 
-## D1 — Authentik ↔ Vaultwarden relationship  **[OPEN]**
-Vaultwarden (OSS) has no native SSO. Options:
-- **(a)** Standalone Vaultwarden auth (email + master password + 2FA); Authentik unrelated.
-- **(b)** Front Vaultwarden with Authentik via a forward-auth / OIDC proxy (extra layer; Vaultwarden
-  still has its own vault unlock underneath).
-Impact: shapes user model, the import target, and how the broker authenticates. **Blocks Phase 1.**
+## D1 — Authentik ↔ Vaultwarden relationship  **[DECIDED 2026-09-09]**
+**Decision:** Option (a) — standalone Vaultwarden auth (email + master password + API key for headless).
+Authentik handles human SSO; Vaultwarden uses its own auth. Broker authenticates headless via
+`BW_CLIENTID`/`BW_CLIENTSECRET` (API key, no interactive login required).
 
-## D2 — Sources & export methods  **[OPEN]**
-Confirm the exact set and each export path:
-- Apple Keychain → macOS Passwords app CSV export, or `security` CLI?
-- Chrome → `chrome://password-manager` CSV.
-- Others? (1Password / LastPass / Firefox / …)
-Impact: which importers to build. Blocks Phase 1 breadth.
+## D2 — Sources & export methods  **[DECIDED 2026-09-09]**
+**Decision:** Apple Keychain via macOS Passwords app CSV export; Chrome via `chrome://password-manager` CSV.
+Two importers built: `importers/keychain.py`, `importers/chrome.py`.
 
-## D3 — Single-user vs multi-user  **[OPEN]**
-One personal vault, or orgs/collections for multiple people? Impact: import layout, ACL model.
+## D3 — Single-user vault  **[DECIDED 2026-09-09, revised by D5]**
+**Decision:** Single personal vault; per-source folders for import layout.
+**Revised by D5:** personal creds stay in personal account; agent-accessible creds go in a dedicated
+agent Vaultwarden account (separate login, separate vault).
 
-## D4 — Recovery model risk appetite  **[OPEN]**
-Vaultwarden is E2E; a forgotten master password = unrecoverable without prearranged recovery.
-Choose one or more: Emergency Access (trusted contact, time-delayed) · offline encrypted export ·
-Shamir-split break-glass secret in a safe. Impact: Phase 3 design.
+## D4 — Recovery model  **[DECIDED 2026-09-09]**
+**Decision:** Encrypted export primary (Phase 3 `cvc-backup`) + Vaultwarden Emergency Access secondary.
 
-## D5 — Agent-access scope & isolation  **[OPEN]**  ⚠ security-critical
-Which credentials may EVER be Playwright-accessible? Expect a **tiny allowlist**. Decide isolation:
-- **(a)** Separate Vaultwarden **collection/org** for agent creds, or
-- **(b)** a **separate Vaultwarden instance** entirely (strongest blast-radius containment).
-Impact: the entire Phase 4 broker design. **Opus security review required before build.**
+## D5 — Agent-access scope & isolation  **[DECIDED 2026-09-09]**  ✅
+**Decision:** Option (b) variant — dedicated **Vaultwarden user account** for the broker (not a separate
+instance, but a separate login with its own vault). Personal vault is unreachable from the broker.
+**Rationale (Opus security review 2026-09-09):** Option (a) (single collection) rejected because a
+compromised broker holds `BW_SESSION` and can call `bw` directly, bypassing ACL entirely — blast
+radius would be the entire personal vault. A separate account limits blast radius to only the
+credentials explicitly provisioned in the agent account.
+**Manual step required:** create the agent Vaultwarden account and provision its API keys into k8s
+secret `cvc-broker-vault` before deploying the broker. See broker-deployment.yaml prerequisites.
 
-## D6 — Where services run  **[OPEN]**
-Broker + reminder service on the OPi k3s cluster, or another host? Impact: deploy/ manifests.
+## D6 — Where services run  **[DECIDED 2026-09-09]**
+**Decision:** k3s on OPi 6 Plus (`100.106.97.34`). Broker as k3s Deployment with `hostPort: 8710`
+bound to Tailscale IP only. nerdctl Compose rejected (CNI flakiness on routable bridges).
+Caddy rejected from broker path — see D8.
 
-## D7 — Reminder policy  **[OPEN]**
-Rotation cadence (`ROTATION_MAX_AGE_DAYS`), and whether HIBP breach checks are enabled. Impact: Phase 2.
+## D7 — Reminder policy  **[DECIDED 2026-09-09]**
+**Decision:** `ROTATION_MAX_AGE_DAYS=180`, `HIBP_ENABLED=true`.
+
+## D8 — mTLS / Caddy in broker path  **[DECIDED 2026-09-12]**
+**Considered:** Using short-lived client certificates (mTLS) so bearer tokens are only exchanged at
+a `/auth` endpoint to mint a cert; subsequent `/v1/fetch` calls use the cert, not the token.
+This would allow Caddy in TCP-passthrough mode (Caddy never sees application-layer headers, so
+bearer tokens can't appear in logs).
+**Decision:** Skip. Tailscale ACL already provides mutual network-layer authentication between
+nodes (both sides hold Tailscale-issued certs; ACL restricts port 8710 to worker IPs
+`100.73.65.49` and `100.127.180.96` only). Adding a custom CA and cert lifecycle management is
+engineering overhead with marginal security gain in a single-user home setup on a Tailnet.
+Current posture: direct hostPort binding to Tailscale IP + bearer token auth. No Caddy in path.
