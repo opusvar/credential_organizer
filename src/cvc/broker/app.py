@@ -64,7 +64,7 @@ app = FastAPI(
     description=(
         "Brokers least-privilege, purpose-bound, audited access to specific Vaultwarden "
         "credentials for automation agents. Default-deny. Every access is recorded before a "
-        "secret is returned. SCAFFOLD: secret retrieval is not yet implemented."
+        "secret is returned."
     ),
     openapi_tags=[
         {"name": "credentials", "description": "Request a specific credential for a stated purpose."},

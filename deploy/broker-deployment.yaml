@@ -1,14 +1,17 @@
 ---
 # cvc credential broker — k3s Deployment
 #
-# Binds hostPort 8710 to Tailscale IP only (100.106.97.34). Never bind to 0.0.0.0.
+# Binds hostPort 8710 to Tailscale IP (100.106.97.34) via hostIP.
+# The broker itself binds 0.0.0.0 INSIDE the pod netns — the Tailscale IP
+# does not exist in the pod's network namespace, only on the host's tailscale0.
+# hostIP on the portmap rule is what restricts access to the Tailscale interface.
 #
 # Prerequisites (one-time setup):
 #   kubectl apply -f deploy/namespace.yaml
 #
 #   # Agent account creds (Vaultwarden dedicated agent account — NOT personal vault):
 #   kubectl -n cvc create secret generic cvc-broker-vault \
-#     --from-literal=BW_SERVER=https://orangepi6.humpback-krait.ts.net:8443 \
+#     --from-literal=BW_SERVER=https://orangepi6.humpback-krait.ts.net:8443/vault \
 #     --from-literal=BW_CLIENTID=<agent account client id> \
 #     --from-literal=BW_CLIENTSECRET=<agent account client secret> \
 #     --from-literal=BW_PASSWORD=<agent account master password>
@@ -17,14 +20,11 @@
 #   kubectl -n cvc create secret generic cvc-broker-acl \
 #     --from-file=broker-acl.yaml=deploy/broker-acl.yaml
 #
-#   # Audit log PersistentVolumeClaim (or swap for emptyDir during development — see NOTE below):
-#   kubectl -n cvc apply -f deploy/broker-audit-pvc.yaml
-#
-# Session refresh: BW_SESSION is not managed by this Deployment. An init container
-# or sidecar must unlock the vault and export BW_SESSION before the broker starts.
-# This is noted as non-blocking (see opus-security-review.md). For now, run
-# `kubectl -n cvc exec <pod> -- bw unlock --passwordenv BW_PASSWORD --raw`
-# and inject the result as BW_SESSION via a Secret before scaling to 1 replica.
+# Image: must be built into k3s containerd, not the system containerd.
+#   sudo nerdctl build -t cvc:latest .
+#   sudo nerdctl save cvc:latest -o /tmp/cvc.tar
+#   sudo k3s ctr -n k8s.io images import /tmp/cvc.tar
+#   sudo k3s ctr -n k8s.io images ls | grep cvc   # verify before applying
 
 apiVersion: apps/v1
 kind: Deployment
@@ -35,6 +35,8 @@ metadata:
     app: cvc-broker
 spec:
   replicas: 1
+  strategy:
+    type: Recreate   # hostPort is a node-level mutex; Recreate prevents scheduling deadlock
   selector:
     matchLabels:
       app: cvc-broker
@@ -43,33 +45,79 @@ spec:
       labels:
         app: cvc-broker
     spec:
+      hostAliases:
+        - ip: "100.106.97.34"
+          hostnames:
+            - "orangepi6.humpback-krait.ts.net"
       securityContext:
         runAsNonRoot: true
-        runAsUser: 1000       # matches the cvc user in the Dockerfile
+        runAsUser: 1000       # matches `useradd -m -u 1000 cvc` in the Dockerfile
         fsGroup: 1000
+      initContainers:
+        - name: bw-unlock
+          image: cvc:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -eu
+            - -c
+            - |
+              /usr/local/bin/bw config server "$BW_SERVER"
+              /usr/local/bin/bw login --check || /usr/local/bin/bw login --apikey
+              SESSION=$(/usr/local/bin/bw unlock --passwordenv BW_PASSWORD --raw)
+              printf '%s' "$SESSION" > /run/cvc/bw-session
+              [ -s /run/cvc/bw-session ] || { echo "ERROR: bw-session is empty"; exit 1; }
+              echo "bw-unlock: session written"
+          envFrom:
+            - secretRef:
+                name: cvc-broker-vault   # BW_SERVER, BW_CLIENTID, BW_CLIENTSECRET, BW_PASSWORD
+          env:
+            - name: HOME
+              value: /home/cvc
+            - name: BITWARDENCLI_APPDATA_DIR
+              value: /run/cvc/bw   # shared with main container so login state persists
+          volumeMounts:
+            - name: bw-session
+              mountPath: /run/cvc
       containers:
         - name: cvc-broker
           image: cvc:latest
           imagePullPolicy: IfNotPresent
-          command: ["cvc-broker"]
+          # Read the session key written by the init container, then start the broker.
+          command:
+            - sh
+            - -c
+            - |
+              export BW_SESSION=$(cat /run/cvc/bw-session)
+              exec cvc-broker
           ports:
             - containerPort: 8710
               hostPort: 8710
-              hostIP: "100.106.97.34"   # Tailscale IP only — never 0.0.0.0
+              hostIP: "100.106.97.34"   # restricts CNI portmap to Tailscale interface
               protocol: TCP
           env:
             - name: BROKER_BIND
-              value: "100.106.97.34"
+              value: "0.0.0.0"   # bind inside pod netns; hostIP above restricts the host side
             - name: BROKER_PORT
               value: "8710"
             - name: BROKER_ACL
               value: /etc/cvc/broker-acl.yaml
             - name: AUDIT_LOG
               value: /var/log/cvc/access.jsonl
-          envFrom:
-            - secretRef:
-                name: cvc-broker-vault   # BW_SERVER, BW_CLIENTID, BW_CLIENTSECRET, BW_PASSWORD
+            - name: OPS_LOG
+              value: /var/log/cvc/ops.jsonl
+            - name: HOME
+              value: /home/cvc
+            - name: BITWARDENCLI_APPDATA_DIR
+              value: /run/cvc/bw   # must match init container so bw finds its login state
+            - name: BW_SERVER
+              valueFrom:
+                secretKeyRef:
+                  name: cvc-broker-vault
+                  key: BW_SERVER
           volumeMounts:
+            - name: bw-session
+              mountPath: /run/cvc   # not readOnly — bw writes data.json on sync
             - name: acl
               mountPath: /etc/cvc
               readOnly: true
@@ -86,18 +134,20 @@ spec:
             httpGet:
               path: /healthz
               port: 8710
-              host: "100.106.97.34"
+              # no host: — probe the pod IP directly, not the host portmap chain
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             httpGet:
               path: /healthz
               port: 8710
-              host: "100.106.97.34"
             initialDelaySeconds: 10
             periodSeconds: 30
             failureThreshold: 3
       volumes:
+        - name: bw-session
+          emptyDir:
+            medium: Memory   # session key and bw app-data never touch disk
         - name: acl
           secret:
             secretName: cvc-broker-acl
@@ -106,7 +156,6 @@ spec:
           # emptyDir: {}
           persistentVolumeClaim:
             claimName: cvc-broker-audit-log
-      restartPolicy: Always
 ---
 # PersistentVolumeClaim for the audit log.
 # Uses the default k3s local-path storage class (single-node; survives pod restarts).

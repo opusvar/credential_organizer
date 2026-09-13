@@ -16,7 +16,10 @@ from pathlib import Path
 class OpsLog:
     def __init__(self, path: str):
         self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass  # best-effort; write attempts will also fail and be swallowed
 
     def record(self, event: str, **fields) -> None:
         """Append one ops event line. Never raises — ops log failure is non-fatal."""

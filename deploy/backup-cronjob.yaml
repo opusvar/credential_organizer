@@ -23,6 +23,10 @@ spec:
       template:
         spec:
           restartPolicy: OnFailure
+          hostAliases:
+            - ip: "100.106.97.34"
+              hostnames:
+                - "orangepi6.humpback-krait.ts.net"
           containers:
             - name: cvc-backup
               image: cvc:latest

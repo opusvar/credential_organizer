@@ -1,12 +1,10 @@
 FROM python:3.11-slim
 
-# Install Bitwarden CLI
-RUN apt-get update && apt-get install -y --no-install-recommends curl unzip \
-    && curl -fsSL "https://vault.bitwarden.com/download/?app=cli&platform=linux" -o /tmp/bw.zip \
-    && unzip /tmp/bw.zip -d /usr/local/bin \
-    && chmod +x /usr/local/bin/bw \
-    && rm /tmp/bw.zip \
-    && apt-get remove -y curl unzip && apt-get autoremove -y \
+# Install Bitwarden CLI via npm (ARM64-compatible — the official binary is x86 only).
+# npm global bin lands at /usr/local/bin/bw via the npm prefix.
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm \
+    && npm install -g @bitwarden/cli \
+    && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -16,7 +14,7 @@ COPY src/ src/
 RUN pip install --no-cache-dir -e .
 
 # Non-root user — bw writes session state to ~/.config/Bitwarden CLI
-RUN useradd -m cvc
+RUN useradd -m -u 1000 cvc
 USER cvc
 ENV HOME=/home/cvc
 

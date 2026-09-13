@@ -4,7 +4,7 @@
 #
 # Prerequisites:
 #   kubectl create secret generic cvc-vault \
-#     --from-literal=BW_SERVER=https://orangepi6.humpback-krait.ts.net:8443 \
+#     --from-literal=BW_SERVER=https://orangepi6.humpback-krait.ts.net:8443/vault \
 #     --from-literal=BW_CLIENTID=<from Vaultwarden Account Settings → API Key> \
 #     --from-literal=BW_CLIENTSECRET=<from Vaultwarden Account Settings → API Key> \
 #     --from-literal=BW_PASSWORD=<vault master password>
@@ -30,6 +30,10 @@ spec:
       template:
         spec:
           restartPolicy: OnFailure
+          hostAliases:
+            - ip: "100.106.97.34"
+              hostnames:
+                - "orangepi6.humpback-krait.ts.net"
           containers:
             - name: cvc-remind
               image: cvc:latest

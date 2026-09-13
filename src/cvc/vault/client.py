@@ -32,7 +32,7 @@ def _session() -> str:
 
 
 _BW = "/usr/local/bin/bw"
-_ENV_BASE = {"HOME", "USER", "TMPDIR", "LANG", "LC_ALL", "PATH"}
+_ENV_BASE = {"HOME", "USER", "TMPDIR", "LANG", "LC_ALL", "PATH", "BITWARDENCLI_APPDATA_DIR"}
 _vault_log = _logging.getLogger(__name__)
 
 
@@ -76,7 +76,7 @@ def _run(*args: str, session: str | None = None,
 
 @dataclass
 class BwClient:
-    server: str  # e.g. https://orangepi6.humpback-krait.ts.net:8443
+    server: str  # e.g. https://orangepi6.humpback-krait.ts.net:8443/vault
 
     def configure(self) -> None:
         """Point bw at this Vaultwarden instance. Idempotent."""

@@ -43,7 +43,7 @@ set -euo pipefail
 EMAIL="${1:-cvc-agent@local}"
 
 # ── Config (edit if your environment differs) ─────────────────────────────────
-VW_DB="/data/auth/vaultwarden/db.sqlite3"
+VW_DB="/home/admin/data/auth/vaultwarden/db.sqlite3"
 ADMIN_TOKEN="$(grep VAULTWARDEN_ADMIN_TOKEN /home/admin/containers/compose/auth/.env \
   | cut -d= -f2- | tr -d '[:space:]')"
 VW_BASE="https://orangepi6.humpback-krait.ts.net:8443/vault"
