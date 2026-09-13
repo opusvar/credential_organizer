@@ -11,10 +11,7 @@
 # they reveal which high-value credentials exist (this file is committed as a template only).
 agents:
   playwright-example:
-    token_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+    token_sha256: "2b29a4e2b3572914335004f9a6d082358438d67bec2971602b2b438ea95d30e6"
     allow:
-      - credential: "00000000-0000-0000-0000-000000000000"   # replace with real Vaultwarden item UUID
+      - credential: "72c393aa-6bc7-4323-a9e7-e2d7459aa777"   # test-credential
         purposes: ["smoke-test"]
-  playwright-locked:
-    token_sha256: "1111111111111111111111111111111111111111111111111111111111111111"
-    allow: []                                                 # explicitly nothing

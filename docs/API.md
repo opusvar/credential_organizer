@@ -13,6 +13,11 @@ python -c "import yaml, json; from cvc.broker.app import app; print(yaml.dump(js
 
 ## Endpoints
 - `GET /healthz` — liveness (no auth required).
+- `GET /readyz` — readiness (no auth required). 200 `{"status": "ready", "vault": "unlocked"}`
+  when the vault session is unlocked; 503 `{"status": "not ready", "vault": "<detail>"}`
+  otherwise (`locked`, `unauthenticated`, `session-missing`, `vault-unreachable`,
+  `status-unparseable`, or `probe-failed`). Backed by a `bw status` check cached for ~25s so
+  repeated probing doesn't shell out every request.
 - `GET /v1/audit/verify` — audit hash-chain integrity (`intact: bool`). Requires auth.
 - `POST /v1/credentials/fetch` — default-deny, purpose-bound, audited credential fetch.
   Auth via `X-Agent-Id` + `Authorization: Bearer <token>`. Returns 401 (auth), 403 (ACL deny),

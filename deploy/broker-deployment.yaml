@@ -21,10 +21,18 @@
 #     --from-file=broker-acl.yaml=deploy/broker-acl.yaml
 #
 # Image: must be built into k3s containerd, not the system containerd.
+#   deploy/rebuild.sh --restart        # wraps the three steps below + rollout
+#
 #   sudo nerdctl build -t cvc:latest .
 #   sudo nerdctl save cvc:latest -o /tmp/cvc.tar
 #   sudo k3s ctr -n k8s.io images import /tmp/cvc.tar
 #   sudo k3s ctr -n k8s.io images ls | grep cvc   # verify before applying
+#
+# ORDER MATTERS: the readinessProbe below targets /readyz, which only exists in
+# images built after that endpoint was added. Applying this manifest against an
+# older image leaves the pod permanently NotReady (the probe 404s). Rebuild the
+# image FIRST (deploy/rebuild.sh), then apply this file. Traffic itself still
+# flows either way, because hostPort does not depend on readiness.
 
 apiVersion: apps/v1
 kind: Deployment
@@ -130,13 +138,23 @@ spec:
             limits:
               cpu: 200m
               memory: 128Mi
+          # /readyz shells out to `bw status` (a forked Node process), so periodSeconds is 30s
+          # to stay inside the 200m CPU limit above. The endpoint caches the result for 25s, so
+          # each probe costs at most one `bw` invocation. timeoutSeconds is 15, not 10: a
+          # credential fetch on this ARM64 host was measured at 14.5s while the box was busy,
+          # so a 10s probe timeout would flap under load and mark a healthy pod NotReady.
+          # Because this pod is reached via hostPort rather than a Service, readiness does NOT
+          # gate traffic — there is no load balancer to pull the pod from. It's an operational
+          # signal surfaced by `kubectl get pods` and `deploy/diag.sh`.
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: 8710
               # no host: — probe the pod IP directly, not the host portmap chain
-            initialDelaySeconds: 5
-            periodSeconds: 10
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 15
+            failureThreshold: 3
           livenessProbe:
             httpGet:
               path: /healthz

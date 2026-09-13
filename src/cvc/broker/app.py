@@ -13,6 +13,10 @@ the environment (unlock managed externally — see broker-deployment.yaml).
 """
 from __future__ import annotations
 
+import json
+import logging as _logging
+import threading
+import time
 from contextlib import asynccontextmanager
 from typing import Literal
 
@@ -20,10 +24,8 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
-import logging as _logging
-
 from .. import config
-from ..vault.client import BwClient, VaultError
+from ..vault.client import BwClient, VaultError, _run, _session
 from .acl import Acl
 from .audit import AuditEvent, AuditLog
 from .ops_log import OpsLog
@@ -31,6 +33,17 @@ from .ops_log import OpsLog
 _log = _logging.getLogger(__name__)
 
 _MAX_BODY = 8 * 1024  # 8 KB
+
+# Paths hit by kubelet probes — excluded from ops-log noise (see _request_log).
+_PROBE_PATHS = frozenset({"/healthz", "/readyz"})
+
+# /readyz TTL cache: readiness shells out to `bw status`, which forks a Node
+# process and costs on the order of a second on this host. Caching keeps the
+# probe cheap under the 200m CPU limit (see broker-deployment.yaml comment).
+_READYZ_TTL = 25.0  # seconds; must stay below the probe periodSeconds so each probe is fresh-ish
+_readyz_lock = threading.Lock()
+_readyz_cache: tuple[float, bool, str] | None = None  # (monotonic_ts, ready, detail)
+_readyz_last_reported: bool | None = None  # last (ready) value recorded to the ops log
 
 
 @asynccontextmanager
@@ -135,24 +148,31 @@ async def _request_log(request: Request, call_next):
     response = await call_next(request)
     duration_ms = round((_time.monotonic() - t0) * 1000)
     agent = request.headers.get("x-agent-id", "-")
-    _log.info(
+    path = request.url.path
+    # Liveness (/healthz) and readiness (/readyz) are polled continuously by
+    # kubelet — logging every probe at info level / recording it to ops.jsonl
+    # would drown out real traffic and grow the ops log forever. Downgrade to
+    # debug and skip the ops record for those two paths only.
+    log_fn = _log.debug if path in _PROBE_PATHS else _log.info
+    log_fn(
         "request",
         extra={
             "method": request.method,
-            "path": request.url.path,
+            "path": path,
             "status": response.status_code,
             "agent": agent,
             "duration_ms": duration_ms,
         },
     )
-    _ops().record(
-        "request",
-        method=request.method,
-        path=request.url.path,
-        status=response.status_code,
-        agent=agent,
-        duration_ms=duration_ms,
-    )
+    if path not in _PROBE_PATHS:
+        _ops().record(
+            "request",
+            method=request.method,
+            path=path,
+            status=response.status_code,
+            agent=agent,
+            duration_ms=duration_ms,
+        )
     return response
 
 
@@ -168,10 +188,83 @@ async def _limit_body_size(request: Request, call_next):
     return response
 
 
+def _vault_ready() -> tuple[bool, str]:
+    """Return (ready, detail). Calls `bw status` at most once per _READYZ_TTL seconds."""
+    global _readyz_cache
+    now = time.monotonic()
+    with _readyz_lock:
+        cached = _readyz_cache
+        if cached is not None and now - cached[0] < _READYZ_TTL:
+            return cached[1], cached[2]
+
+    # Cache miss (or expired) — probe outside the lock so a slow `bw` invocation
+    # doesn't block other requests from reading the cache. Two concurrent
+    # misses may both probe; that's acceptable.
+    try:
+        try:
+            session = _session()
+        except VaultError:
+            ready, detail = False, "session-missing"
+        else:
+            raw = _run("status", session=session)
+            status = json.loads(raw).get("status")
+            if status == "unlocked":
+                ready, detail = True, "unlocked"
+            elif status in ("locked", "unauthenticated"):
+                ready, detail = False, status
+            else:
+                ready, detail = False, "status-unparseable"
+    except VaultError:
+        ready, detail = False, "vault-unreachable"
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        ready, detail = False, "status-unparseable"
+    except Exception:
+        # A readiness probe must never return a 500 — map anything unexpected
+        # (never the session key, server URL, or vault contents) to a fixed token.
+        ready, detail = False, "probe-failed"
+
+    with _readyz_lock:
+        _readyz_cache = (time.monotonic(), ready, detail)
+    return ready, detail
+
+
 # ── endpoints ────────────────────────────────────────────────────────────────
 @app.get("/healthz", tags=["meta"], summary="Liveness probe")
 def healthz() -> dict:
+    # Deliberately does not touch the vault: a dead vault session must not
+    # trigger a container restart loop via the liveness probe — that is the
+    # readiness probe's job (see /readyz below).
     return {"status": "ok"}
+
+
+@app.get("/readyz", tags=["meta"], summary="Readiness probe — verifies the vault session is live")
+def readyz() -> JSONResponse:
+    """No authentication — the kubelet cannot present credentials.
+
+    200 `{"status": "ready", "vault": "unlocked"}` when the vault session is unlocked;
+    503 `{"status": "not ready", "vault": "<detail>"}` otherwise. Result is cached for
+    up to `_READYZ_TTL` seconds so repeated probing does not shell out to `bw` every
+    request.
+    """
+    global _readyz_last_reported
+    ready, detail = _vault_ready()
+
+    with _readyz_lock:
+        changed = _readyz_last_reported != ready
+        _readyz_last_reported = ready
+    if changed:
+        _ops().record("readiness_changed", ready=ready, vault=detail)
+
+    if ready:
+        return JSONResponse(
+            content={"status": "ready", "vault": detail},
+            headers={"Cache-Control": "no-store"},
+        )
+    return JSONResponse(
+        status_code=503,
+        content={"status": "not ready", "vault": detail},
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/v1/audit/verify", tags=["audit"], summary="Verify audit-log integrity")

@@ -26,6 +26,8 @@ recovery/
 audit/*.log
 audit/*.jsonl
 !audit/.gitkeep
+# ACL backups written by deploy/rotate-token.sh before each patch
+deploy/*.bak-*
 
 # ── Python ──────────────────────────────────────────────────────────────────
 __pycache__/

@@ -15,6 +15,8 @@ BROKER_PORT="8710"
 NAMESPACE="cvc"
 VW_URL="https://orangepi6.humpback-krait.ts.net:8443/vault"
 KUBECTL="${KUBECTL:-kubectl}"
+AGENT_ID="${CVC_SMOKE_AGENT:-playwright-example}"
+TOKEN_FILE="${CVC_TOKEN_FILE:-$HOME/.config/cvc/smoke-token}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 ok()   { echo -e "${GREEN}  ✓${NC} $*"; }
@@ -131,13 +133,100 @@ else
     fail "cvc-broker-audit-log PVC missing"
 fi
 
+# ── 10. audit log integrity ───────────────────────────────────────────────────
+section "10. Audit log integrity"
+TOKEN=""
+if [ -n "${CVC_SMOKE_TOKEN:-}" ]; then
+    TOKEN="$CVC_SMOKE_TOKEN"
+elif [ -s "$TOKEN_FILE" ]; then
+    TOKEN=$(head -n1 "$TOKEN_FILE" | sed -e 's/[[:space:]]*$//')
+fi
+
+if [ -z "$TOKEN" ]; then
+    warn "audit log check skipped — no token available"
+    echo "    Enable: export CVC_SMOKE_TOKEN=<agent-token>"
+    echo "    Or:     write the agent token to $TOKEN_FILE (mode 600)"
+else
+    AUDIT_BODY=$(umask 077 && mktemp)
+    if [ -z "$AUDIT_BODY" ]; then
+        warn "could not create temp file for audit check — skipping"
+    else
+        AUDIT_STATUS=$(curl -s --max-time 10 \
+            -H "X-Agent-Id: $AGENT_ID" \
+            -H "Authorization: Bearer $TOKEN" \
+            -o "$AUDIT_BODY" -w '%{http_code}' \
+            "http://${BROKER_IP}:${BROKER_PORT}/v1/audit/verify" 2>/dev/null) || true
+        AUDIT_RESP=$(cat "$AUDIT_BODY" 2>/dev/null)
+        rm -f "$AUDIT_BODY"
+
+        case "$AUDIT_STATUS" in
+            200)
+                if command -v jq &>/dev/null; then
+                    INTACT=$(echo "$AUDIT_RESP" | jq -r '.intact // empty' 2>/dev/null)
+                elif echo "$AUDIT_RESP" | grep -q '"intact":true'; then
+                    INTACT="true"
+                else
+                    INTACT="false"
+                fi
+
+                if [ -z "$INTACT" ]; then
+                    # Distinguish "could not parse" from "chain is broken" — reporting a
+                    # tampered audit log because jq choked would be a false alarm.
+                    fail "could not parse the /v1/audit/verify response (no 'intact' field)"
+                    echo "    Response: $AUDIT_RESP"
+                elif [[ "$INTACT" == "true" ]]; then
+                    ok "audit log intact (hash chain verifies)"
+
+                    # Cheap emptiness check — best-effort, never fatal. Re-derive the
+                    # pod name into its own var; the section-3 POD var may be unset here.
+                    AUDIT_POD=$($KUBECTL -n "$NAMESPACE" get pods -l app=cvc-broker --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+                    if [ -n "$AUDIT_POD" ]; then
+                        AUDIT_LINES=$($KUBECTL -n "$NAMESPACE" exec "$AUDIT_POD" -- sh -c 'wc -l < /var/log/cvc/access.jsonl 2>/dev/null || echo 0' 2>/dev/null)
+                        if [[ "$AUDIT_LINES" =~ ^[0-9]+$ ]] && [ "$AUDIT_LINES" -eq 0 ]; then
+                            warn "intact:true is vacuous — audit log has no records yet"
+                        fi
+                    fi
+                else
+                    fail "AUDIT LOG NOT INTACT — the hash chain does not recompute; the log was altered or truncated"
+                    echo "    See: docs/RUNBOOK-recovery.md"
+                    echo "    Check: the audit PVC must not be an emptyDir"
+                fi
+                ;;
+            401)
+                fail "audit token rejected (rotated token, or agent id not in ACL)"
+                echo "    Fix: deploy/rotate-token.sh"
+                echo "    Check: deploy/broker-acl.yaml"
+                ;;
+            400)
+                fail "malformed Authorization header sent to /v1/audit/verify"
+                ;;
+            ""|000)
+                fail "broker unreachable"
+                echo "    See: section 7 above (Broker /healthz)"
+                ;;
+            *)
+                fail "unexpected status $AUDIT_STATUS from /v1/audit/verify: $AUDIT_RESP"
+                ;;
+        esac
+    fi
+fi
+
 # ── summary ───────────────────────────────────────────────────────────────────
 section "Done"
-echo "For a test credential fetch:"
-echo "  TOKEN=\$(python3 -m cvc.broker.tokens 2>/dev/null | grep '^token:' | awk '{print \$2}')"
+echo "Easiest end-to-end check:  deploy/smoke-test.sh"
+echo
+echo "For a manual test credential fetch:"
+# NOTE: do NOT mint a token here with 'python3 -m cvc.broker.tokens' — a freshly minted
+# token is not in the ACL and will just return 401. Use the agent's existing token.
+echo "  TOKEN=\$(cat $TOKEN_FILE)   # or: export CVC_SMOKE_TOKEN=<agent-token>"
 echo "  curl -s -X POST http://${BROKER_IP}:${BROKER_PORT}/v1/credentials/fetch \\"
 echo "    -H 'X-Agent-Id: playwright-example' \\"
 echo "    -H \"Authorization: Bearer \$TOKEN\" \\"
 echo "    -H 'Content-Type: application/json' \\"
 echo "    -d '{\"credential\": \"<uuid>\", \"purpose\": \"smoke-test\"}'"
+echo
+echo "For a manual audit log integrity check:"
+echo "  curl -s http://${BROKER_IP}:${BROKER_PORT}/v1/audit/verify \\"
+echo "    -H 'X-Agent-Id: playwright-example' \\"
+echo "    -H \"Authorization: Bearer \$TOKEN\""
 echo

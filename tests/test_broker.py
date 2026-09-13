@@ -320,3 +320,88 @@ def test_acl_authenticate_missing_token_sha256_returns_false():
     })
     result = acl.authenticate("a_missing", "anytoken")
     assert result is False
+
+
+# ── /readyz — vault-touching readiness probe ───────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def _reset_readyz_cache(monkeypatch):
+    """The /readyz TTL cache is a module global — reset it before every test so
+    results don't leak between tests regardless of run order."""
+    import cvc.broker.app as app_mod
+    monkeypatch.setattr(app_mod, "_readyz_cache", None)
+    monkeypatch.setattr(app_mod, "_readyz_last_reported", None)
+
+
+def test_readyz_ready_when_unlocked(tmp_path, monkeypatch):
+    import cvc.broker.app as app_mod
+
+    monkeypatch.setattr(app_mod, "_session", lambda: "fake-session-key")
+    monkeypatch.setattr(app_mod, "_run", lambda *a, **k: json.dumps({"status": "unlocked"}))
+
+    gen = _make_app_client(tmp_path)
+    client, _ = next(gen)
+    r = client.get("/readyz")
+    assert r.status_code == 200
+    assert r.json() == {"status": "ready", "vault": "unlocked"}
+    assert r.headers["cache-control"] == "no-store"
+
+
+def test_readyz_not_ready_when_locked(tmp_path, monkeypatch):
+    import cvc.broker.app as app_mod
+
+    monkeypatch.setattr(app_mod, "_session", lambda: "fake-session-key")
+    monkeypatch.setattr(app_mod, "_run", lambda *a, **k: json.dumps({"status": "locked"}))
+
+    gen = _make_app_client(tmp_path)
+    client, _ = next(gen)
+    r = client.get("/readyz")
+    assert r.status_code == 503
+    assert r.json() == {"status": "not ready", "vault": "locked"}
+
+
+def test_readyz_vault_unreachable_on_vault_error(tmp_path, monkeypatch):
+    import cvc.broker.app as app_mod
+    from cvc.vault.client import VaultError
+
+    monkeypatch.setattr(app_mod, "_session", lambda: "fake-session-key")
+
+    def _raise(*a, **k):
+        raise VaultError("vault command failed")
+
+    monkeypatch.setattr(app_mod, "_run", _raise)
+
+    gen = _make_app_client(tmp_path)
+    client, _ = next(gen)
+    r = client.get("/readyz")
+    assert r.status_code == 503
+    assert r.json() == {"status": "not ready", "vault": "vault-unreachable"}
+
+
+def test_readyz_session_missing(tmp_path, monkeypatch):
+    import cvc.broker.app as app_mod
+    from cvc.vault.client import VaultError
+
+    def _raise():
+        raise VaultError("BW_SESSION not set — run `bw unlock` and export the session key")
+
+    monkeypatch.setattr(app_mod, "_session", _raise)
+
+    gen = _make_app_client(tmp_path)
+    client, _ = next(gen)
+    r = client.get("/readyz")
+    assert r.status_code == 503
+    assert r.json() == {"status": "not ready", "vault": "session-missing"}
+
+
+def test_readyz_requires_no_auth(tmp_path, monkeypatch):
+    """/readyz must be reachable with no headers at all — kubelet cannot present credentials."""
+    import cvc.broker.app as app_mod
+
+    monkeypatch.setattr(app_mod, "_session", lambda: "fake-session-key")
+    monkeypatch.setattr(app_mod, "_run", lambda *a, **k: json.dumps({"status": "unlocked"}))
+
+    gen = _make_app_client(tmp_path)
+    client, _ = next(gen)
+    r = client.get("/readyz")  # no x-agent-id, no authorization header
+    assert r.status_code == 200
