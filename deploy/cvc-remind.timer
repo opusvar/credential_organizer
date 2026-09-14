@@ -1,0 +1,17 @@
+[Unit]
+Description=cvc reminder — daily vault hygiene check
+Requires=cvc-remind.service
+
+[Timer]
+OnCalendar=*-*-* 07:00:00 UTC
+# Fire immediately on next start if the last run was missed (host was off/asleep).
+# NOTE: systemd does not accept trailing `# comments` on the same line as a
+# directive — the whole remainder is parsed as the value, so `Persistent=true # x`
+# is an invalid boolean. Comments must live on their own line, as here.
+Persistent=true
+# Spread load / avoid a thundering herd with other 07:00 timers.
+RandomizedDelaySec=300
+Unit=cvc-remind.service
+
+[Install]
+WantedBy=timers.target

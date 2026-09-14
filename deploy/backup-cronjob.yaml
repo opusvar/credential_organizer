@@ -5,7 +5,23 @@
 # Prerequisites:
 #   kubectl create secret generic cvc-vault  (same secret as cvc-remind)
 #
-#   kubectl create pvc cvc-backups (or substitute a hostPath / NFS volume below)
+#   kubectl apply -f deploy/backup-pvc.yaml   # creates PVC cvc-backups
+#   (or substitute a hostPath / NFS volume below)
+#
+# One-shot setup of both Phase 2/3 CronJobs: deploy/setup-phase23.sh
+#
+# KNOWN GAP (D9 off-host sync) — the `onedrive` binary is NOT in cvc:latest (see Dockerfile:
+# only nodejs/npm + bw are installed), and the host binary cannot simply be bind-mounted: it
+# is dynamically linked against the host's glibc 2.39 (Ubuntu 24.04) and the LDC D runtime,
+# neither of which exists in python:3.11-slim (glibc 2.36). So from the pod, copy_to_onedrive()
+# stages the export into the hostPath below and then fails the sync leg with
+# "onedrive not found at /usr/local/bin/onedrive" — logged as a WARNING, exit 0, PVC export
+# intact (by design). The export IS staged on the NVMe; it reaches the cloud on the next
+# host-side `onedrive --sync --single-directory dan_ai_tool_dock/cvc-backups`.
+# To close the gap, pick one: (a) add onedrive to the image, (b) run a host systemd
+# path-unit/timer that syncs when the staging dir changes, or (c) run cvc-backup on the host.
+# Note also that --confdir is mounted read-only here, but the client needs to write
+# items.sqlite3 in its confdir, so (a) alone is not sufficient.
 
 apiVersion: batch/v1
 kind: CronJob
@@ -23,6 +39,15 @@ spec:
       template:
         spec:
           restartPolicy: OnFailure
+          # fsGroup is REQUIRED here, not cosmetic: the image runs as uid 1000 (`USER cvc`)
+          # while a freshly provisioned local-path PVC is created root-owned. Without
+          # fsGroup the kubelet does not chown the volume and `bw export` fails with
+          # EACCES writing to /backups. Same securityContext as the broker deployment,
+          # whose audit-log PVC has the identical constraint.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000       # matches `useradd -m -u 1000 cvc` in the Dockerfile
+            fsGroup: 1000         # makes the cvc-backups volume group-writable by uid 1000
           hostAliases:
             - ip: "100.106.97.34"
               hostnames:
@@ -35,13 +60,36 @@ spec:
                 - secretRef:
                     name: cvc-vault
               env:
+                # Phase 4 lesson — see remind-cronjob.yaml. Must be set for `bw export`
+                # to find the login state written by login_apikey() in the same pod.
+                - name: HOME
+                  value: /home/cvc
+                - name: BITWARDENCLI_APPDATA_DIR
+                  value: /home/cvc/.bw
                 - name: BACKUP_DIR
                   value: /backups
                 - name: BACKUP_RETENTION_DAYS
                   value: "30"
+                # D9 off-host backup. These match the defaults in src/cvc/config.py; they are
+                # set explicitly so the manifest alone shows where exports are pushed.
+                - name: ONEDRIVE_DEST_DIR
+                  value: /mnt/data/onedrive/dan_ai_tool_dock/cvc-backups
+                - name: ONEDRIVE_BIN
+                  value: /usr/local/bin/onedrive
+                - name: ONEDRIVE_CONFIG_DIR
+                  value: /home/admin/.config/onedrive
               volumeMounts:
+                # KEEP FIRST: check-sync.sh reads the first mountPath in this file and
+                # asserts it equals BACKUP_DIR.
                 - name: backups
                   mountPath: /backups
+                # readOnly: only the refresh token is needed. The pod must never write here —
+                # a corrupted config or a rotated-then-lost token would break host sync too.
+                - name: onedrive-config
+                  mountPath: /home/admin/.config/onedrive
+                  readOnly: true
+                - name: onedrive-dest
+                  mountPath: /mnt/data/onedrive/dan_ai_tool_dock/cvc-backups
               resources:
                 requests:
                   cpu: 50m
@@ -53,3 +101,19 @@ spec:
             - name: backups
               persistentVolumeClaim:
                 claimName: cvc-backups
+            # D9: the onedrive client is user-scoped on the host (no systemctl --user from a
+            # pod), so the pod runs the binary itself and needs the host's refresh token.
+            # hostPath rather than a k8s secret deliberately: the token is rotated in place
+            # by the host client, and a copied secret would silently go stale.
+            - name: onedrive-config
+              hostPath:
+                path: /home/admin/.config/onedrive
+                type: Directory        # must already exist — never create an empty config
+            # Staging dir inside the client's sync_dir (/mnt/data/onedrive). DirectoryOrCreate
+            # so a first run cannot fail on a missing path. One-time host setup (uid 1000 must
+            # be able to write here) is in deploy/setup-phase23.sh — fsGroup does NOT apply to
+            # hostPath volumes, only to the PVC above.
+            - name: onedrive-dest
+              hostPath:
+                path: /mnt/data/onedrive/dan_ai_tool_dock/cvc-backups
+                type: DirectoryOrCreate

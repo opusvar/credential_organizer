@@ -1,0 +1,14 @@
+[Unit]
+Description=cvc vault backup — weekly encrypted export
+Requires=cvc-backup.service
+
+[Timer]
+OnCalendar=Sun *-*-* 02:00:00 UTC
+# Fire on next start if the weekly run was missed. Comments must be on their own
+# line — systemd parses a trailing `# ...` as part of the directive's value.
+Persistent=true
+RandomizedDelaySec=600
+Unit=cvc-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -3,6 +3,9 @@
 #
 # Rules:
 #   credential   = Vaultwarden item UUID (not the item name). Get it from `bw get item <name> | jq .id`.
+#                  EXCEPTION: the capability sentinels in acl._SENTINEL_CREDENTIALS ("backup")
+#                  name a broker operation rather than a vault item, so they are exempt from
+#                  the UUID check. Everything else must still be a UUID.
 #   purposes     = required non-empty list. [] or omitted = DENY ALL. ["*"] = any purpose allowed.
 #   token_sha256 = sha256 hex of the agent's service token. Generate:
 #                    python -m cvc.broker.tokens   (prints token + sha256)
@@ -11,7 +14,9 @@
 # they reveal which high-value credentials exist (this file is committed as a template only).
 agents:
   playwright-example:
-    token_sha256: "2b29a4e2b3572914335004f9a6d082358438d67bec2971602b2b438ea95d30e6"
+    token_sha256: "96195bec3f62f3d43ecec9bdedef2f30aaa1c4cb65cec96096434e709c76560c"
     allow:
       - credential: "72c393aa-6bc7-4323-a9e7-e2d7459aa777"   # test-credential
         purposes: ["smoke-test"]
+      - credential: "backup"   # sentinel — not a UUID; backup trigger is not a credential fetch
+        purposes: ["manual-trigger", "scheduled"]

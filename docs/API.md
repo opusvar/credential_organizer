@@ -22,6 +22,63 @@ python -c "import yaml, json; from cvc.broker.app import app; print(yaml.dump(js
 - `POST /v1/credentials/fetch` — default-deny, purpose-bound, audited credential fetch.
   Auth via `X-Agent-Id` + `Authorization: Bearer <token>`. Returns 401 (auth), 403 (ACL deny),
   502 (vault error), or 200 with `{"credential": "<uuid>", "field": "<field>", "value": "<val>"}`.
+- `POST /v1/backup/trigger` — run the encrypted backup pipeline now (the on-demand
+  equivalent of the weekly `cvc-backup` systemd user timer; D9, D10). Auth via
+  `X-Agent-Id` + `Authorization: Bearer <token>`. Body: `{"purpose": "manual-trigger"}`.
+
+  Note that the broker still runs in k3s (D10), so a trigger through this endpoint
+  executes `cvc-backup` **in the broker pod**, not on the host. The pod has no access to
+  the host's `onedrive` client, so the off-host sync step is expected to log
+  `WARNING: OneDrive sync failed` — that is the sync gap D10 closes for the *scheduled*
+  run. Use `systemctl --user start cvc-backup.service` on the host for a manual run that
+  also reaches OneDrive.
+
+  **⚠ BLOCKING — takes MINUTES.** A full `bw export` on this ARM64 host under a 200m CPU
+  limit runs for minutes, and the response is returned only after the pipeline finishes.
+  Set a client timeout of **600s or more**; do not poll it (each call holds a FastAPI
+  threadpool worker for its whole duration).
+
+  Authorized against the ACL credential sentinel `"backup"` — a *capability*, not a vault
+  item, so it is exempt from the UUID rule that applies to every other `credential:` entry
+  (see `acl._SENTINEL_CREDENTIALS`). Permitted purposes come from `deploy/broker-acl.yaml`
+  (`manual-trigger`, `scheduled`). The grant is audited before the vault is touched, with
+  `credential: "backup"`.
+
+  | Status | Meaning |
+  |--------|---------|
+  | 200 | The **trigger** succeeded. Check `exit_code` for whether the **backup** did. |
+  | 401 | Authentication failed. |
+  | 403 | ACL deny — agent lacks the `backup` capability, or the purpose is not permitted. |
+  | 503 | The subprocess could not be started at all. |
+  | 504 | The backup exceeded the internal 600s cap and was killed. |
+
+  200 body: `{"triggered": true, "exit_code": 0, "log": "<last 2000 chars of stdout>",
+  "note": "..."}`. `exit_code: 0` means the encrypted export landed in the pod's
+  `BACKUP_DIR`.
+  A non-zero `exit_code` means the backup failed — read `log`. Note that an OneDrive
+  off-host sync failure does **not** change `exit_code` (it is non-fatal by design, D9);
+  it appears only as a `WARNING: OneDrive sync failed` line, which goes to the child's
+  stderr and so is visible in the broker log rather than in `log`.
 
 The other components (importers, reminders, backup) are CLIs/jobs, not HTTP services, so they
 have no OpenAPI surface; their contracts live in `ARCHITECTURE.md` and their `--help`.
+
+## CLI deployment surface
+
+`cvc-remind` and `cvc-backup` are deployed as **systemd user timers on the host**, not as
+k3s CronJobs (D10). Their contract is the process environment plus the unit files:
+
+| | `cvc-remind` | `cvc-backup` |
+|---|---|---|
+| Unit | `deploy/cvc-remind.service` | `deploy/cvc-backup.service` |
+| Timer | `deploy/cvc-remind.timer` — daily 07:00 UTC | `deploy/cvc-backup.timer` — Sun 02:00 UTC |
+| Env file | `~/.config/cvc/remind.env` (mode 600) | `~/.config/cvc/backup.env` (mode 600) |
+| Template | `deploy/remind.env.example` | `deploy/backup.env.example` |
+| Install | `deploy/setup-timers.sh` | `deploy/setup-timers.sh` |
+| Logs | `journalctl --user -u cvc-remind` | `journalctl --user -u cvc-backup` |
+| Run now | `systemctl --user start cvc-remind.service` | `systemctl --user start cvc-backup.service` |
+
+Exit codes (both): `0` success, `1` a fatal step failed (vault auth, vault read, export,
+MQTT publish). The OneDrive sync and the retention prune are non-fatal by design (D9) — they
+log `WARNING:` and leave the exit code at `0`, so a `0` does **not** prove the off-host copy
+happened. `journalctl` is the only place that distinction is visible.

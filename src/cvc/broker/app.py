@@ -15,6 +15,9 @@ from __future__ import annotations
 
 import json
 import logging as _logging
+import os
+import subprocess
+import sys
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -82,6 +85,7 @@ app = FastAPI(
     openapi_tags=[
         {"name": "credentials", "description": "Request a specific credential for a stated purpose."},
         {"name": "audit", "description": "Audit-log integrity."},
+        {"name": "backup", "description": "On-demand encrypted vault backup."},
         {"name": "meta", "description": "Health and readiness."},
     ],
     docs_url=None,
@@ -138,6 +142,22 @@ class FetchResponse(BaseModel):
     credential: str
     field: str
     value: str
+
+
+class TriggerRequest(BaseModel):
+    purpose: str = Field(..., max_length=_MAX_FIELD,
+                         description="Why the backup is being triggered (bound + logged).")
+
+
+# The ACL credential sentinel gating /v1/backup/trigger. Not a vault UUID — see
+# acl._SENTINEL_CREDENTIALS. Kept as a named constant so the endpoint, the audit record
+# and deploy/broker-acl.yaml cannot drift apart.
+_BACKUP_CAPABILITY = "backup"
+
+# `cvc-backup` shells out to `bw login`/`unlock`/`export`; Phase 4 measured a single
+# credential fetch at ~15s on this host, so a whole-vault export runs in minutes. The cap
+# is a guard against a wedged `bw`, not an expected duration.
+_BACKUP_TIMEOUT = 600
 
 
 # ── middleware ───────────────────────────────────────────────────────────────
@@ -335,6 +355,91 @@ def fetch_credential(
 
     return JSONResponse(
         content={"credential": req.credential, "field": req.field, "value": value},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/v1/backup/trigger", tags=["backup"],
+          summary="Run the encrypted backup pipeline now (BLOCKING — minutes)")
+def trigger_backup(
+    req: TriggerRequest,
+    x_agent_id: str = Header(..., max_length=64, description="Calling agent's id."),
+    authorization: str = Header(..., description="Bearer <agent service token>."),
+    acl: Acl = Depends(_acl),
+    audit: AuditLog = Depends(_audit),
+    cfg: config.Config = Depends(_cfg),
+) -> JSONResponse:
+    """On-demand equivalent of the cvc-backup CronJob (D9).
+
+    WARNING — THIS IS A BLOCKING CALL that takes MINUTES. `cvc-backup` performs a full
+    `bw export` of the vault; on this ARM64 host under a 200m CPU limit that is minutes,
+    not seconds. Callers MUST set a client timeout of 600s or more. The request occupies
+    one of FastAPI's threadpool workers for its whole duration, so do not poll it.
+
+    200 means the TRIGGER succeeded, not that the backup did — check `exit_code` (0 = the
+    backup itself succeeded) and `log`. 403/401 are ACL/auth refusals, 503 means the
+    subprocess could not be started at all, 504 means it exceeded the internal cap.
+    """
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=400, detail="Authorization header must use Bearer scheme")
+    token = authorization.removeprefix("Bearer ").strip()
+
+    # 1. Authenticate.
+    if not acl.authenticate(x_agent_id, token):
+        audit.record(AuditEvent(agent=x_agent_id, credential=_BACKUP_CAPABILITY,
+                                purpose=req.purpose, outcome="deny:auth"))
+        raise HTTPException(status_code=401, detail="authentication failed")
+
+    # 2. Authorize (default-deny) — the "backup" capability, not a vault item.
+    decision = acl.authorize(x_agent_id, _BACKUP_CAPABILITY, req.purpose)
+    if not decision.allowed:
+        audit.record(AuditEvent(agent=x_agent_id, credential=_BACKUP_CAPABILITY,
+                                purpose=req.purpose, outcome=f"deny:{decision.reason}"))
+        raise HTTPException(status_code=403, detail=decision.reason)
+
+    # 3. Audit the grant BEFORE the vault is touched, same invariant as a credential fetch.
+    audit.record(AuditEvent(agent=x_agent_id, credential=_BACKUP_CAPABILITY,
+                            purpose=req.purpose, outcome="allow"))
+
+    # 4. Run the pipeline out-of-process. Deliberately NOT inline: `bw export` is a
+    #    multi-minute blocking syscall that would stall the event loop, and a separate
+    #    process means a wedged `bw` cannot take the broker down with it.
+    try:
+        result = subprocess.run(  # noqa: PLW1510
+            [sys.executable, "-m", "cvc.backup"],
+            capture_output=True,
+            text=True,
+            timeout=_BACKUP_TIMEOUT,
+            env={**os.environ, "BACKUP_DIR": cfg.backup_dir},
+        )
+    except subprocess.TimeoutExpired as exc:
+        _log.error("backup_trigger_timeout", extra={"agent": x_agent_id})
+        raise HTTPException(
+            status_code=504,
+            detail=f"backup exceeded {_BACKUP_TIMEOUT}s and was killed",
+        ) from exc
+    except OSError as exc:
+        # The subprocess never started (no interpreter, fork failure, ENOMEM).
+        _log.error("backup_trigger_spawn_failed", extra={"agent": x_agent_id}, exc_info=True)
+        raise HTTPException(status_code=503, detail="could not start backup") from exc
+
+    _ops().record(
+        "backup_triggered",
+        agent=x_agent_id,
+        purpose=req.purpose,
+        exit_code=result.returncode,
+    )
+
+    # stdout is truncated to the tail: it holds the export path and prune count, and an
+    # unbounded child log must not become an unbounded HTTP response. stderr is NOT
+    # returned — it can carry `bw` diagnostics; it goes to the broker's own log instead.
+    return JSONResponse(
+        content={
+            "triggered": True,
+            "exit_code": result.returncode,
+            "log": result.stdout[-2000:],
+            "note": "blocking call — completed synchronously; use a 600s+ client timeout",
+        },
         headers={"Cache-Control": "no-store"},
     )
 

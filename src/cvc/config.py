@@ -32,6 +32,12 @@ class Config:
     backup_dir: str
     backup_retention_days: int
 
+    # Off-host backup (D9) — encrypted exports are copied to a plain directory inside the
+    # onedrive client's sync_dir, then a one-shot sync is triggered. Not a FUSE mount.
+    onedrive_dest_dir: str
+    onedrive_bin: str
+    onedrive_config_dir: str
+
     # Broker
     broker_bind: str
     broker_port: int
@@ -52,6 +58,11 @@ def load() -> Config:
         hibp_enabled=_get("HIBP_ENABLED", "true").lower() == "true",
         backup_dir=_get("BACKUP_DIR", "./backups"),
         backup_retention_days=int(_get("BACKUP_RETENTION_DAYS", "30")),
+        onedrive_dest_dir=_get(
+            "ONEDRIVE_DEST_DIR", "/mnt/data/onedrive/dan_ai_tool_dock/cvc-backups"
+        ),
+        onedrive_bin=_get("ONEDRIVE_BIN", "/usr/local/bin/onedrive"),
+        onedrive_config_dir=_get("ONEDRIVE_CONFIG_DIR", "/home/admin/.config/onedrive"),
         broker_bind=_get("BROKER_BIND", "127.0.0.1"),
         broker_port=int(_get("BROKER_PORT", "8710")),
         audit_log=_get("AUDIT_LOG", "./audit/access.jsonl"),

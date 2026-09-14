@@ -1,0 +1,55 @@
+[Unit]
+Description=cvc credential reminder — evaluate vault and publish to Home Assistant
+Documentation=man:systemd.service(5) file:/home/admin/projects/credential_organizer/docs/DECISIONS.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Fails fast rather than hanging if the vault or MQTT broker is unreachable.
+# TimeoutStartSec is a [Service] directive — it is NOT valid in [Unit]
+# (the [Unit] equivalent is JobTimeoutSec=, which does something different).
+TimeoutStartSec=300
+
+# Env file keeps secrets off the command line and out of ps output.
+# Mode 600, created by deploy/setup-timers.sh from deploy/remind.env.example.
+EnvironmentFile=%h/.config/cvc/remind.env
+
+# %h expands to /home/admin in a user unit.
+Environment=HOME=%h
+# bw writes data.json (login + session state) here; without it every vault call
+# fails with "You are not logged in." — same lesson as the Phase 4 broker.
+Environment=BITWARDENCLI_APPDATA_DIR=%h/.local/share/cvc/bw
+# A systemd user unit gets a minimal PATH (/usr/local/bin:/usr/bin:/bin:...), which
+# does NOT include the mise-managed toolchains. Two things break without this:
+#   - node: `bw` is a #!/usr/bin/env node script, so node must be resolvable.
+#   - the cvc console scripts, if ~/.local/bin is not already on PATH.
+# cvc.vault.client only forwards PATH (plus HOME/USER/TMPDIR/LANG/LC_ALL/
+# BITWARDENCLI_APPDATA_DIR) into the bw subprocess, so this PATH is the one bw sees.
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/installs/node/lts/bin:%h/.local/share/mise/installs/python/3.12/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# deploy/setup-timers.sh symlinks this to the real console script (the package is
+# installed into the mise python, not a project venv).
+ExecStart=%h/.local/bin/cvc-remind
+
+# Runs as the admin user — this is a user unit, so no User= is needed.
+# stdout+stderr to the journal: journalctl --user -u cvc-remind
+StandardOutput=journal
+StandardError=journal
+
+# Resource guardrails (the kernel-enforced equivalent of the k8s limits this replaces:
+# cpu 200m / memory 128Mi). Requires the cpu+memory controllers to be delegated to
+# user@1000.service — verified present on this host.
+CPUQuota=20%
+MemoryMax=128M
+
+# Minimal, low-risk hardening. Deliberately NOT using ProtectSystem=strict here:
+# it would also have to be reasoned about for cvc-backup (which writes to /mnt/data
+# and lets the onedrive client update its own sqlite cache), and an untested
+# filesystem namespace is a worse failure mode than the risk it removes.
+NoNewPrivileges=true
+PrivateTmp=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=default.target

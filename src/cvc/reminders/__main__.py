@@ -1,7 +1,8 @@
 """`cvc-remind` CLI — evaluate vault credentials against policy, publish to Home Assistant.
 
-Run as a k8s CronJob (D6). Reads all vault items, evaluates age/reuse/weakness/breach,
-and publishes a sensor + attributes to HA via MQTT discovery.
+Run as a systemd user timer (see deploy/cvc-remind.service) or directly. Reads all vault
+items, evaluates age/reuse/weakness/breach, and publishes a sensor + attributes to HA via
+MQTT discovery.
 
 Vault auth: same API key flow as cvc-import (BW_CLIENTID + BW_CLIENTSECRET + BW_PASSWORD).
 MQTT auth: MQTT_USERNAME + MQTT_PASSWORD from env.
@@ -19,7 +20,7 @@ from .. import config
 from ..vault.client import BwClient, VaultError
 from .hibp import times_pwned
 from .mqtt_publish import publish
-from .policy import CredRecord, evaluate
+from .policy import CredRecord, Finding, evaluate
 
 
 def _parse_rotated(item: dict) -> datetime | None:
@@ -48,12 +49,20 @@ def _vault_records(cfg) -> list[CredRecord]:
     for item in items:
         if item.get("type") != 1:  # login items only
             continue
+        item_id = item.get("id")
+        if not item_id:  # malformed item — nothing we could report on or link back to
+            continue
         login = item.get("login") or {}
+        password = login.get("password") or ""
+        if not password:
+            # A login with no password (URI-only bookmark, passkey-only entry) has nothing
+            # to rotate, reuse, or breach-check. Including it produced false "weak" findings.
+            continue
         records.append(CredRecord(
-            item_id=item["id"],
+            item_id=item_id,
             name=item.get("name", ""),
             username=login.get("username") or "",
-            password=login.get("password") or "",
+            password=password,
             last_rotated=_parse_rotated(item),
         ))
     return records
@@ -91,7 +100,6 @@ def main(argv: list[str] | None = None) -> int:
                     if match:
                         match.reasons.append(f"breached: found {count}x in HIBP")
                     else:
-                        from .policy import Finding
                         findings.append(Finding(
                             item_id=rec.item_id,
                             name=rec.name,

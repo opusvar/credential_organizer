@@ -1,6 +1,7 @@
 """`cvc-backup` CLI — authenticate to Vaultwarden, export encrypted, prune old exports.
 
-Run as a k8s CronJob alongside cvc-remind. Requires the same vault auth env vars as cvc-import.
+Run as a systemd user timer (see deploy/cvc-backup.service) or directly, alongside
+cvc-remind. Requires the same vault auth env vars as cvc-import.
 """
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ import sys
 
 from ..config import load
 from ..vault.client import BwClient, VaultError
-from .exporter import export_encrypted, prune
+from .exporter import copy_to_onedrive, export_encrypted, prune
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -36,10 +37,24 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: export failed — {exc}", file=sys.stderr)
         return 1
 
-    removed = prune(cfg.backup_dir, cfg.backup_retention_days)
-    if removed:
-        print(f"backup: pruned {removed} export(s) older than {cfg.backup_retention_days}d")
+    # Non-fatal: PVC export already succeeded; sync outage must not fail the job (D9).
+    try:
+        copy_to_onedrive(
+            path, cfg.onedrive_dest_dir, cfg.onedrive_bin, cfg.onedrive_config_dir
+        )
+        print("backup: synced to OneDrive")
+    except RuntimeError as exc:
+        print(f"WARNING: OneDrive sync failed — {exc}", file=sys.stderr)
 
+    # Pruning is best-effort: the export above already succeeded, so a retention failure
+    # (read-only volume, races with another job) must not fail the backup itself.
+    try:
+        removed = prune(cfg.backup_dir, cfg.backup_retention_days)
+    except OSError as exc:
+        print(f"WARNING: prune failed — {exc}", file=sys.stderr)
+        return 0
+
+    print(f"backup: pruned {removed} export(s) older than {cfg.backup_retention_days}d")
     return 0
 
 

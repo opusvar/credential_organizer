@@ -12,6 +12,12 @@ ACL file (YAML) shape:
         token_sha256: "..."
         allow: []                              # explicitly nothing
 
+`credential:` is normally a Vaultwarden item UUID (enforced by Acl.load()). The sole
+exception is the capability sentinels in _SENTINEL_CREDENTIALS — e.g. "backup", which gates
+POST /v1/backup/trigger. A sentinel names an operation, not a vault item, so no UUID exists
+for it. Authorization treats sentinels exactly like any other credential: default-deny,
+purpose-bound, audited.
+
 Rules enforced:
 - Unknown agent  -> deny.
 - Agent with no matching allow entry for the credential -> deny.
@@ -34,6 +40,18 @@ _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
+
+# Non-UUID `credential:` values that name a broker CAPABILITY rather than a vault item.
+# The UUID rule exists to catch a real mistake — writing an item's human name where its id
+# belongs, which silently denies at runtime. A capability has no vault id at all, so the
+# rule cannot apply to it; a closed allowlist keeps the typo protection for everything else
+# instead of dropping the check (or minting a fake UUID that no `bw get item` would resolve
+# and that nobody reading the ACL could interpret).
+#
+# Every sentinel must be lowercase: authorize() lowercases the requested credential.
+_SENTINEL_CREDENTIALS = frozenset({
+    "backup",   # POST /v1/backup/trigger — runs the export pipeline, returns no secret
+})
 
 
 class Denied(Exception):
@@ -61,6 +79,8 @@ class Acl:
         for agent_id, agent in (data.get("agents") or {}).items():
             for entry in agent.get("allow", []) or []:
                 cred = entry.get("credential", "")
+                if cred.lower() in _SENTINEL_CREDENTIALS:
+                    continue
                 if not _UUID_RE.match(cred):
                     raise ValueError(
                         f"ACL agent '{agent_id}': credential '{cred}' is not a UUID"

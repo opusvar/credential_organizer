@@ -35,6 +35,26 @@ def test_unique_strong_recent_is_clean():
     assert evaluate(records, max_age_days=180) == []
 
 
+def test_passwordless_records_are_not_flagged():
+    """URI-only / passkey-only logins have no password to rotate, reuse, or judge weak.
+
+    Before this guard, two such items counted "" as a shared password and both were
+    reported as reused *and* weak — pure noise in the Home Assistant sensor.
+    """
+    records = [_rec("1", "Bookmark A", "", age_days=900),
+               _rec("2", "Bookmark B", "", age_days=900)]
+    assert evaluate(records, max_age_days=180) == []
+
+
+def test_passwordless_record_does_not_mask_real_findings():
+    records = [
+        _rec("1", "Bookmark", "", age_days=900),
+        _rec("2", "Weak One", "abcdef", age_days=1),
+    ]
+    findings = evaluate(records, max_age_days=180)
+    assert [f.item_id for f in findings] == ["2"]
+
+
 def test_no_rotation_date_not_flagged_stale():
     rec = CredRecord(item_id="x", name="X", username="u", password="Str0ng!Unique", last_rotated=None)
     findings = evaluate([rec], max_age_days=180)

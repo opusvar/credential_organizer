@@ -39,13 +39,18 @@ def _is_weak(pw: str) -> bool:
 
 def evaluate(records: list[CredRecord], *, max_age_days: int = 180) -> list[Finding]:
     """Flag stale (by age), reused (same password across items), and weak credentials."""
+    # Records with no password (URI-only logins, passkey-only entries) are not credentials
+    # this policy can judge: there is nothing to rotate, and counting "" as a shared value
+    # would report every one of them as reused.
+    scored = [r for r in records if r.password]
+
     # Reuse: group by password value (kept in memory only).
     counts: dict[str, int] = {}
-    for r in records:
+    for r in scored:
         counts[r.password] = counts.get(r.password, 0) + 1
 
     findings: list[Finding] = []
-    for r in records:
+    for r in scored:
         reasons: list[str] = []
         age = _age_days(r.last_rotated)
         if age is not None and age > max_age_days:

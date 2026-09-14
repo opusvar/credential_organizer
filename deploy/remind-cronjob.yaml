@@ -30,6 +30,12 @@ spec:
       template:
         spec:
           restartPolicy: OnFailure
+          # No volumes here, so no fsGroup is needed — but pin the identity anyway so this
+          # pod matches the broker and backup pods (bw writes its app-data under /home/cvc,
+          # which only uid 1000 owns).
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000       # matches `useradd -m -u 1000 cvc` in the Dockerfile
           hostAliases:
             - ip: "100.106.97.34"
               hostnames:
@@ -44,6 +50,15 @@ spec:
                 - secretRef:
                     name: cvc-mqtt
               env:
+                # Phase 4 lesson: bw resolves its login/session state from
+                # BITWARDENCLI_APPDATA_DIR (falling back to $HOME/.config). Set both
+                # explicitly so the value does not depend on the image's ENV defaults —
+                # if bw cannot find its app-data it fails with "You are not logged in."
+                # even though login_apikey() succeeded moments earlier in the same process.
+                - name: HOME
+                  value: /home/cvc
+                - name: BITWARDENCLI_APPDATA_DIR
+                  value: /home/cvc/.bw
                 - name: ROTATION_MAX_AGE_DAYS
                   value: "180"
                 - name: HIBP_ENABLED

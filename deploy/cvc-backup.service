@@ -1,0 +1,50 @@
+[Unit]
+Description=cvc vault backup — encrypted export to OneDrive
+Documentation=man:systemd.service(5) file:/home/admin/projects/credential_organizer/docs/DECISIONS.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# `bw export` of a full vault takes several minutes on this ARM64 host under a 20%
+# CPU quota, and the onedrive --sync afterwards adds more. TimeoutStartSec is a
+# [Service] directive — it is NOT valid in [Unit].
+TimeoutStartSec=600
+
+# Mode 600, created by deploy/setup-timers.sh from deploy/backup.env.example.
+EnvironmentFile=%h/.config/cvc/backup.env
+
+Environment=HOME=%h
+Environment=BITWARDENCLI_APPDATA_DIR=%h/.local/share/cvc/bw
+Environment=ONEDRIVE_BIN=/usr/local/bin/onedrive
+Environment=ONEDRIVE_CONFIG_DIR=%h/.config/onedrive
+# Absolute path — %h reaches /home/admin only, so it cannot be used to address
+# /mnt/data. This value must stay identical to BACKUP_DIR/ONEDRIVE_DEST_DIR in
+# backup.env (deploy/check-sync.sh asserts the example file agrees).
+# NOTE: directives are applied in order of appearance, so these Environment=
+# lines override the same keys from the EnvironmentFile above.
+Environment=BACKUP_DIR=/mnt/data/onedrive/dan_ai_tool_dock/cvc-backups
+# A systemd user unit gets a minimal PATH that excludes the mise toolchains. node
+# must be resolvable because `bw` is a #!/usr/bin/env node script, and PATH is one
+# of the few vars cvc.vault.client forwards into the bw subprocess.
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/installs/node/lts/bin:%h/.local/share/mise/installs/python/3.12/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# deploy/setup-timers.sh symlinks this to the real console script.
+ExecStart=%h/.local/bin/cvc-backup
+
+# journalctl --user -u cvc-backup
+StandardOutput=journal
+StandardError=journal
+
+# Kernel-enforced equivalent of the k8s limits this replaces (cpu 200m / mem 128Mi).
+# If a growing vault ever OOM-kills the export (journal: "A process of this unit has
+# been killed by the OOM killer"), raise MemoryMax rather than removing it.
+CPUQuota=20%
+MemoryMax=128M
+
+NoNewPrivileges=true
+PrivateTmp=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=default.target

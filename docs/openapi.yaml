@@ -122,6 +122,57 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /v1/backup/trigger:
+    post:
+      tags:
+      - backup
+      summary: "Run the encrypted backup pipeline now (BLOCKING \u2014 minutes)"
+      description: "On-demand equivalent of the cvc-backup CronJob (D9).\n\nWARNING\
+        \ \u2014 THIS IS A BLOCKING CALL that takes MINUTES. `cvc-backup` performs\
+        \ a full\n`bw export` of the vault; on this ARM64 host under a 200m CPU limit\
+        \ that is minutes,\nnot seconds. Callers MUST set a client timeout of 600s\
+        \ or more. The request occupies\none of FastAPI's threadpool workers for its\
+        \ whole duration, so do not poll it.\n\n200 means the TRIGGER succeeded, not\
+        \ that the backup did \u2014 check `exit_code` (0 = the\nbackup itself succeeded)\
+        \ and `log`. 403/401 are ACL/auth refusals, 503 means the\nsubprocess could\
+        \ not be started at all, 504 means it exceeded the internal cap."
+      operationId: trigger_backup_v1_backup_trigger_post
+      parameters:
+      - name: x-agent-id
+        in: header
+        required: true
+        schema:
+          type: string
+          maxLength: 64
+          description: Calling agent's id.
+          title: X-Agent-Id
+        description: Calling agent's id.
+      - name: authorization
+        in: header
+        required: true
+        schema:
+          type: string
+          description: Bearer <agent service token>.
+          title: Authorization
+        description: Bearer <agent service token>.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TriggerRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
     FetchRequest:
@@ -159,6 +210,17 @@ components:
           title: Detail
       type: object
       title: HTTPValidationError
+    TriggerRequest:
+      properties:
+        purpose:
+          type: string
+          maxLength: 256
+          title: Purpose
+          description: Why the backup is being triggered (bound + logged).
+      type: object
+      required:
+      - purpose
+      title: TriggerRequest
     ValidationError:
       properties:
         loc:
@@ -190,5 +252,7 @@ tags:
   description: Request a specific credential for a stated purpose.
 - name: audit
   description: Audit-log integrity.
+- name: backup
+  description: On-demand encrypted vault backup.
 - name: meta
   description: Health and readiness.

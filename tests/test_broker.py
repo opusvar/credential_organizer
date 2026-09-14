@@ -3,7 +3,10 @@ No FastAPI/network needed — these exercise the enforcement primitives directly
 """
 import hashlib
 import json
+import subprocess
+import sys
 import threading
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -320,6 +323,233 @@ def test_acl_authenticate_missing_token_sha256_returns_false():
     })
     result = acl.authenticate("a_missing", "anytoken")
     assert result is False
+
+
+# ── POST /v1/backup/trigger (D9 on-demand backup) ─────────────────────────────
+#
+# subprocess.run is patched in the app module for every test that gets past authz, so no
+# `cvc.backup` child process, `bw` invocation, or onedrive sync ever runs.
+
+def _grant_backup(tmp_path, purposes='["manual-trigger", "scheduled"]') -> None:
+    """Rewrite the ACL from _make_app_client to also grant the "backup" capability.
+
+    Safe to call after the client exists: the _acl() dependency re-reads the file on every
+    request. Also asserts the non-UUID sentinel survives Acl.load()'s UUID validation.
+    """
+    valid_uuid = "12345678-1234-1234-1234-123456789012"
+    (tmp_path / "acl.yaml").write_text(
+        f"agents:\n  agent1:\n    token_sha256: {_sha('goodtoken')}\n"
+        f"    allow:\n      - credential: \"{valid_uuid}\"\n        purposes: ['*']\n"
+        f"      - credential: \"backup\"\n        purposes: {purposes}\n"
+    )
+
+
+def _fake_completed(returncode=0, stdout="backup: exported to /backups/b.json\n", stderr=""):
+    m = MagicMock()
+    m.returncode = returncode
+    m.stdout = stdout
+    m.stderr = stderr
+    return m
+
+
+def test_backup_trigger_requires_auth(tmp_path):
+    gen = _make_app_client(tmp_path)
+    client, _ = next(gen)
+    _grant_backup(tmp_path)
+
+    with patch("cvc.broker.app.subprocess.run") as run:
+        # No headers at all — FastAPI rejects the missing required headers.
+        r = client.post("/v1/backup/trigger", json={"purpose": "manual-trigger"})
+        assert r.status_code in (401, 422), r.status_code
+
+        # Known agent, wrong token.
+        r = client.post(
+            "/v1/backup/trigger",
+            json={"purpose": "manual-trigger"},
+            headers={"x-agent-id": "agent1", "authorization": "Bearer badtoken"},
+        )
+        assert r.status_code == 401
+
+        # Unknown agent.
+        r = client.post(
+            "/v1/backup/trigger",
+            json={"purpose": "manual-trigger"},
+            headers={"x-agent-id": "ghost", "authorization": "Bearer goodtoken"},
+        )
+        assert r.status_code == 401
+
+    # The core invariant: an unauthenticated caller must never start a backup.
+    run.assert_not_called()
+
+
+def test_backup_trigger_runs_backup_subprocess(tmp_path):
+    gen = _make_app_client(tmp_path)
+    client, _ = next(gen)
+    _grant_backup(tmp_path)
+
+    with patch("cvc.broker.app.subprocess.run", return_value=_fake_completed()) as run:
+        r = client.post(
+            "/v1/backup/trigger",
+            json={"purpose": "manual-trigger"},
+            headers={"x-agent-id": "agent1", "authorization": "Bearer goodtoken"},
+        )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["triggered"] is True
+    assert body["exit_code"] == 0
+    assert "exported to" in body["log"]
+
+    run.assert_called_once()
+    argv = run.call_args[0][0]
+    # Run as a module via the current interpreter — not a shell string, not `cvc-backup`
+    # off PATH, so the broker's own venv is what executes the pipeline.
+    assert argv[1:] == ["-m", "cvc.backup"]
+    assert argv[0] == sys.executable
+    kwargs = run.call_args[1]
+    assert kwargs["timeout"] == 600, "must outlive a multi-minute bw export"
+    assert kwargs["capture_output"] is True
+    assert "BACKUP_DIR" in kwargs["env"]
+
+
+def test_backup_trigger_returns_200_even_on_backup_failure(tmp_path):
+    """200 means the TRIGGER worked; the backup's own result is in exit_code."""
+    gen = _make_app_client(tmp_path)
+    client, _ = next(gen)
+    _grant_backup(tmp_path)
+
+    failed = _fake_completed(returncode=1, stdout="", stderr="ERROR: vault auth failed")
+    with patch("cvc.broker.app.subprocess.run", return_value=failed):
+        r = client.post(
+            "/v1/backup/trigger",
+            json={"purpose": "scheduled"},
+            headers={"x-agent-id": "agent1", "authorization": "Bearer goodtoken"},
+        )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["triggered"] is True
+    assert body["exit_code"] == 1
+    # stderr can carry `bw` diagnostics — it must not be echoed to the caller.
+    assert "vault auth failed" not in r.text
+
+
+def test_backup_trigger_acl_deny(tmp_path):
+    """An agent without the backup capability gets 403 and starts no subprocess."""
+    gen = _make_app_client(tmp_path)
+    client, _ = next(gen)
+    # Default ACL from _make_app_client grants only the test UUID — no "backup" entry.
+
+    with patch("cvc.broker.app.subprocess.run") as run:
+        r = client.post(
+            "/v1/backup/trigger",
+            json={"purpose": "manual-trigger"},
+            headers={"x-agent-id": "agent1", "authorization": "Bearer goodtoken"},
+        )
+
+    assert r.status_code == 403, r.text
+    run.assert_not_called()
+
+    # The deny must be on the record before anything else happens.
+    lines = [l for l in (tmp_path / "audit.jsonl").read_text().splitlines() if l.strip()]
+    assert len(lines) == 1
+    rec = json.loads(lines[0])
+    assert rec["outcome"].startswith("deny:")
+    assert rec["credential"] == "backup"
+
+
+def test_backup_trigger_denies_unlisted_purpose(tmp_path):
+    """Purpose-bound: the capability is granted, but not for this purpose."""
+    gen = _make_app_client(tmp_path)
+    client, _ = next(gen)
+    _grant_backup(tmp_path, purposes='["scheduled"]')
+
+    with patch("cvc.broker.app.subprocess.run") as run:
+        r = client.post(
+            "/v1/backup/trigger",
+            json={"purpose": "manual-trigger"},
+            headers={"x-agent-id": "agent1", "authorization": "Bearer goodtoken"},
+        )
+    assert r.status_code == 403, r.text
+    run.assert_not_called()
+
+
+def test_backup_trigger_audits_allow_before_running(tmp_path):
+    """Same invariant as a credential fetch: the grant is recorded before the vault is touched."""
+    gen = _make_app_client(tmp_path)
+    client, _ = next(gen)
+    _grant_backup(tmp_path)
+
+    audit_path = tmp_path / "audit.jsonl"
+
+    def _assert_audited_first(*a, **k):
+        lines = [l for l in audit_path.read_text().splitlines() if l.strip()]
+        assert len(lines) == 1, "audit record must exist before the backup starts"
+        assert json.loads(lines[0])["outcome"] == "allow"
+        return _fake_completed()
+
+    with patch("cvc.broker.app.subprocess.run", side_effect=_assert_audited_first):
+        r = client.post(
+            "/v1/backup/trigger",
+            json={"purpose": "manual-trigger"},
+            headers={"x-agent-id": "agent1", "authorization": "Bearer goodtoken"},
+        )
+    assert r.status_code == 200, r.text
+
+    rec = json.loads(audit_path.read_text().splitlines()[0])
+    assert rec == {**rec, "agent": "agent1", "credential": "backup",
+                   "purpose": "manual-trigger", "outcome": "allow"}
+
+
+def test_backup_trigger_503_when_subprocess_cannot_start(tmp_path):
+    gen = _make_app_client(tmp_path)
+    client, _ = next(gen)
+    _grant_backup(tmp_path)
+
+    with patch("cvc.broker.app.subprocess.run", side_effect=OSError("fork failed")):
+        r = client.post(
+            "/v1/backup/trigger",
+            json={"purpose": "manual-trigger"},
+            headers={"x-agent-id": "agent1", "authorization": "Bearer goodtoken"},
+        )
+    assert r.status_code == 503, r.text
+    assert "fork failed" not in r.text
+
+
+def test_backup_trigger_504_on_timeout(tmp_path):
+    gen = _make_app_client(tmp_path)
+    client, _ = next(gen)
+    _grant_backup(tmp_path)
+
+    timeout = subprocess.TimeoutExpired(cmd="cvc.backup", timeout=600)
+    with patch("cvc.broker.app.subprocess.run", side_effect=timeout):
+        r = client.post(
+            "/v1/backup/trigger",
+            json={"purpose": "manual-trigger"},
+            headers={"x-agent-id": "agent1", "authorization": "Bearer goodtoken"},
+        )
+    assert r.status_code == 504, r.text
+
+
+def test_acl_backup_sentinel_loads_but_other_non_uuids_still_rejected(tmp_path):
+    """The sentinel exemption must be a closed allowlist, not a hole in the UUID rule."""
+    acl_yaml = tmp_path / "sentinel-acl.yaml"
+
+    acl_yaml.write_text(
+        "agents:\n  a1:\n    token_sha256: abc\n    allow:\n"
+        "      - credential: \"backup\"\n        purposes: ['manual-trigger']\n"
+    )
+    acl = Acl.load(str(acl_yaml))  # must not raise
+    assert acl.authorize("a1", "backup", "manual-trigger").allowed
+    assert not acl.authorize("a1", "backup", "exfil").allowed
+
+    # A different non-UUID string is still a load-time error.
+    acl_yaml.write_text(
+        "agents:\n  a1:\n    token_sha256: abc\n    allow:\n"
+        "      - credential: \"restore\"\n        purposes: ['p']\n"
+    )
+    with pytest.raises(ValueError, match="not a UUID"):
+        Acl.load(str(acl_yaml))
 
 
 # ── /readyz — vault-touching readiness probe ───────────────────────────────────

@@ -78,19 +78,37 @@ def _run(*args: str, session: str | None = None,
 class BwClient:
     server: str  # e.g. https://orangepi6.humpback-krait.ts.net:8443/vault
 
+    def _status(self) -> dict:
+        """Return parsed output of `bw status`. Never raises."""
+        try:
+            import json as _json
+            raw = _run("status")
+            return _json.loads(raw)
+        except Exception:
+            return {}
+
     def configure(self) -> None:
-        """Point bw at this Vaultwarden instance. Idempotent."""
+        """Point bw at this Vaultwarden instance. Idempotent.
+
+        bw refuses `config server` when already logged in, so skip it if the
+        server URL is already correct (the common case on the second+ run).
+        """
+        st = self._status()
+        if st.get("serverUrl", "").rstrip("/") == self.server.rstrip("/"):
+            return
         _run("config", "server", self.server)
 
     def login_apikey(self) -> None:
         """Log in using BW_CLIENTID + BW_CLIENTSECRET from the environment.
 
-        Requires: BW_CLIENTID, BW_CLIENTSECRET set in env (from Vaultwarden
-        Account Settings → API Key).  Safe to call repeatedly; bw is idempotent
-        when already logged in with the same identity.
+        Skips the login call when bw reports it is already authenticated, so the
+        service can call this unconditionally on every run without re-logging in.
         """
         if not os.environ.get("BW_CLIENTID") or not os.environ.get("BW_CLIENTSECRET"):
             raise VaultError("BW_CLIENTID and BW_CLIENTSECRET must be set for API key login")
+        st = self._status()
+        if st.get("status") in ("locked", "unlocked"):
+            return  # already logged in
         _run("login", "--apikey", extra_env={"BW_CLIENTID", "BW_CLIENTSECRET"})
 
     def unlock(self) -> str:

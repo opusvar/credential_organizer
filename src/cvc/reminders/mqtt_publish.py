@@ -7,6 +7,7 @@ cycle suitable for a CronJob; not a long-running daemon.
 from __future__ import annotations
 
 import json
+import os
 
 import paho.mqtt.client as mqtt
 
@@ -50,7 +51,10 @@ def publish(findings: list[Finding], cfg: Config) -> None:
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="cvc-remind")
     if cfg.mqtt_username:
-        passwd = __import__("os").environ.get("MQTT_PASSWORD")
+        # MQTT_PASSWORD is read straight from the environment rather than carried on Config,
+        # for the same reason BW_SESSION is not: the secret is fetched at the moment of use and
+        # never lives in a shared object. It arrives via the cvc-mqtt secret's envFrom.
+        passwd = os.environ.get("MQTT_PASSWORD")
         client.username_pw_set(cfg.mqtt_username, passwd)
 
     client.connect(cfg.mqtt_host, cfg.mqtt_port, keepalive=10)
