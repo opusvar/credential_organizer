@@ -7,7 +7,8 @@ from pathlib import Path
 
 import yaml
 
-from cvc.access import brokeracl  # noqa: F401  (registers the broker-acl builder)
+from cvc.access import brokeracl, graph, mosquitto  # noqa: F401  (register builders)
+from cvc.access.mosquitto import build_mosquitto
 from cvc.access.builders import BUILDERS
 from cvc.access.check import check_registry
 from cvc.access.importacl import import_broker_acl
@@ -38,6 +39,7 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("target", choices=sorted(BUILDERS))
     b.add_argument("--registry", **reg_kw)
     b.add_argument("--out", help="output file (default: stdout)")
+    b.add_argument("--system", help="limit output to one system id (mosquitto only)")
     i = sub.add_parser("import-acl", help="bootstrap a registry from a broker ACL")
     i.add_argument("acl")
     i.add_argument("--out", default=DEFAULT_REGISTRY)
@@ -69,7 +71,19 @@ def main(argv: list[str] | None = None) -> int:
         if not findings:
             print("ok: no findings")
         return 1 if any(f.level == "error" for f in findings) else 0
-    text = BUILDERS[args.target](reg, None)
+    if args.system and args.target != "mosquitto":
+        print(f"error: --system is only supported for the mosquitto target, "
+              f"not {args.target!r}", file=sys.stderr)
+        return 2
+    try:
+        if args.target == "mosquitto":
+            text = build_mosquitto(reg, None, system=args.system)
+        else:
+            text = BUILDERS[args.target](reg, None)
+    except RegistryError as e:
+        for err in e.errors:
+            print(f"error: {err}", file=sys.stderr)
+        return 1
     if args.out:
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)
