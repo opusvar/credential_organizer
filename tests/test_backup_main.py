@@ -100,7 +100,7 @@ def test_main_exports_session_before_export(base_env):
 
     def capture_export(dest_dir):
         seen["session"] = os.environ.get("BW_SESSION")
-        return Path(dest_dir) / "vault-backup-20260913T000000Z.json"
+        return [Path(dest_dir) / "vault-backup-20260913T000000Z-personal.json"]
 
     fake = _fake_vault()
     with patch.object(backup, "BwClient", return_value=fake), \
@@ -143,7 +143,7 @@ def test_main_does_not_prune_when_export_produced_nothing(base_env):
 def test_main_success_reports_path_and_prune_count(base_env, capsys):
     out_path = base_env / "backups" / "vault-backup-20260913T000000Z.json"
     with patch.object(backup, "BwClient", return_value=_fake_vault()), \
-            patch.object(backup, "export_encrypted", return_value=out_path), \
+            patch.object(backup, "export_encrypted", return_value=[out_path]), \
             patch.object(backup, "prune", return_value=3):
         rc = backup.main([])
     assert rc == 0
@@ -155,7 +155,7 @@ def test_main_success_reports_path_and_prune_count(base_env, capsys):
 def test_main_reports_zero_pruned(base_env, capsys):
     """The count is always reported so a CronJob log shows retention actually ran."""
     with patch.object(backup, "BwClient", return_value=_fake_vault()), \
-            patch.object(backup, "export_encrypted", return_value=Path("/x/b.json")), \
+            patch.object(backup, "export_encrypted", return_value=[Path("/x/b.json")]), \
             patch.object(backup, "prune", return_value=0):
         assert backup.main([]) == 0
     assert "pruned 0 export(s)" in capsys.readouterr().out
@@ -163,7 +163,7 @@ def test_main_reports_zero_pruned(base_env, capsys):
 
 def test_main_passes_configured_dir_and_retention(base_env):
     with patch.object(backup, "BwClient", return_value=_fake_vault()), \
-            patch.object(backup, "export_encrypted", return_value=Path("/x/b.json")) as exp, \
+            patch.object(backup, "export_encrypted", return_value=[Path("/x/b.json")]) as exp, \
             patch.object(backup, "prune", return_value=0) as pr:
         assert backup.main([]) == 0
     expected_dir = str(base_env / "backups")
@@ -174,7 +174,7 @@ def test_main_passes_configured_dir_and_retention(base_env):
 def test_main_honours_custom_retention(base_env, monkeypatch):
     monkeypatch.setenv("BACKUP_RETENTION_DAYS", "7")
     with patch.object(backup, "BwClient", return_value=_fake_vault()), \
-            patch.object(backup, "export_encrypted", return_value=Path("/x/b.json")), \
+            patch.object(backup, "export_encrypted", return_value=[Path("/x/b.json")]), \
             patch.object(backup, "prune", return_value=0) as pr:
         assert backup.main([]) == 0
     assert pr.call_args[0][1] == 7
@@ -185,7 +185,7 @@ def test_main_honours_custom_retention(base_env, monkeypatch):
 def test_main_survives_prune_oserror(base_env, capsys):
     """The export already succeeded — a retention failure must not fail the backup."""
     with patch.object(backup, "BwClient", return_value=_fake_vault()), \
-            patch.object(backup, "export_encrypted", return_value=Path("/x/b.json")), \
+            patch.object(backup, "export_encrypted", return_value=[Path("/x/b.json")]), \
             patch.object(backup, "prune", side_effect=OSError("read-only file system")):
         rc = backup.main([])
     assert rc == 0
@@ -194,21 +194,21 @@ def test_main_survives_prune_oserror(base_env, capsys):
     assert "read-only file system" in err
 
 
-# ── off-host OneDrive copy is non-fatal (D9) ──────────────────────────────────
+# ── off-host OneDrive copy failure is fatal to the exit code (D9, F8) ──────────────────────────────────
 #
 # copy_to_onedrive is patched at the module under test in every case, so no onedrive
 # binary is invoked and no real sync is attempted.
 
-def test_main_logs_warning_on_onedrive_failure(base_env, capsys):
-    """A sync outage must not fail the job — the PVC export already succeeded."""
+def test_main_exits_1_on_onedrive_failure(base_env, capsys):
+    """F8: a backup that never leaves the host must fail the job, but retention still runs."""
     with patch.object(backup, "BwClient", return_value=_fake_vault()), \
-            patch.object(backup, "export_encrypted", return_value=Path("/x/b.json")), \
+            patch.object(backup, "export_encrypted", return_value=[Path("/x/b.json")]), \
             patch.object(backup, "copy_to_onedrive",
                          side_effect=RuntimeError("onedrive sync failed (exit 1): boom")), \
             patch.object(backup, "prune", return_value=0) as pr:
         rc = backup.main([])
 
-    assert rc == 0, "OneDrive failure must never make the CronJob exit non-zero"
+    assert rc == 1, "OneDrive failure must make the job exit non-zero (F8)"
     captured = capsys.readouterr()
     assert "OneDrive sync failed" in captured.err
     assert "boom" in captured.err
@@ -219,7 +219,7 @@ def test_main_logs_warning_on_onedrive_failure(base_env, capsys):
 
 def test_main_prints_synced_on_success(base_env, capsys):
     with patch.object(backup, "BwClient", return_value=_fake_vault()), \
-            patch.object(backup, "export_encrypted", return_value=Path("/x/b.json")), \
+            patch.object(backup, "export_encrypted", return_value=[Path("/x/b.json")]), \
             patch.object(backup, "copy_to_onedrive") as cp, \
             patch.object(backup, "prune", return_value=0):
         rc = backup.main([])
@@ -238,13 +238,13 @@ def test_main_passes_export_path_and_onedrive_config(base_env, monkeypatch):
     out_path = Path("/backups/vault-backup-20260913T000000Z.json")
 
     with patch.object(backup, "BwClient", return_value=_fake_vault()), \
-            patch.object(backup, "export_encrypted", return_value=out_path), \
+            patch.object(backup, "export_encrypted", return_value=[out_path]), \
             patch.object(backup, "copy_to_onedrive") as cp, \
             patch.object(backup, "prune", return_value=0):
         assert backup.main([]) == 0
 
     assert cp.call_args[0] == (
-        out_path,
+        [out_path],
         "/mnt/data/onedrive/dan_ai_tool_dock/cvc-backups",
         "/usr/local/bin/onedrive",
         "/home/admin/.config/onedrive",
@@ -266,7 +266,7 @@ def test_main_does_not_copy_when_export_failed(base_env):
 
 def test_main_never_prints_the_session_key(base_env, capsys):
     with patch.object(backup, "BwClient", return_value=_fake_vault()), \
-            patch.object(backup, "export_encrypted", return_value=Path("/x/b.json")), \
+            patch.object(backup, "export_encrypted", return_value=[Path("/x/b.json")]), \
             patch.object(backup, "prune", return_value=1):
         backup.main([])
     captured = capsys.readouterr()

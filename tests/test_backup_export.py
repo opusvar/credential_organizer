@@ -30,17 +30,47 @@ def _result(returncode=0, stderr=""):
     return m
 
 
-def _writing_run(payload: str = '{"encrypted":true}'):
-    """A subprocess.run stand-in that behaves like a successful `bw export`."""
+_PROTECTED = '{"encrypted":true,"passwordProtected":true}'
+
+
+@pytest.fixture(autouse=True)
+def _export_password(monkeypatch):
+    monkeypatch.setenv("BACKUP_EXPORT_PASSWORD", "test-passphrase")
+
+
+def _list_result():
+    r = _result(0)
+    r.stdout = "[]"
+    return r
+
+
+def _writing_run(payload: str = _PROTECTED):
+    """A subprocess.run stand-in: no orgs, empty item lists, a successful `bw export`.
+
+    Only `bw export` calls are recorded, so calls[0] is the (personal) export.
+    """
     calls: list[dict] = []
 
     def fake_run(argv, **kwargs):
+        if argv[1] == "list":
+            return _list_result()
         calls.append({"argv": argv, **kwargs})
         out = Path(argv[argv.index("--output") + 1])
         out.write_text(payload)
         return _result(0)
 
     fake_run.calls = calls  # type: ignore[attr-defined]
+    return fake_run
+
+
+def _list_ok_then(export_result=None, export_exc=None):
+    """List calls succeed with []; the export call returns/raises as given."""
+    def fake_run(argv, **kwargs):
+        if argv[1] == "list":
+            return _list_result()
+        if export_exc is not None:
+            raise export_exc
+        return export_result
     return fake_run
 
 
@@ -65,17 +95,17 @@ def test_export_creates_file_and_returns_path(monkeypatch, tmp_path):
     monkeypatch.setenv("BW_SESSION", "fake-session-key")
     dest = tmp_path / "backups"
     with patch("cvc.backup.exporter.subprocess.run", _writing_run()):
-        out = export_encrypted(str(dest))
+        (out,) = export_encrypted(str(dest))
     assert out.exists()
     assert out.parent == dest
-    assert out.read_text() == '{"encrypted":true}'
+    assert out.read_text() == _PROTECTED
 
 
 def test_export_creates_dest_dir_if_missing(monkeypatch, tmp_path):
     monkeypatch.setenv("BW_SESSION", "fake-session-key")
     dest = tmp_path / "deep" / "nested" / "backups"
     with patch("cvc.backup.exporter.subprocess.run", _writing_run()):
-        out = export_encrypted(str(dest))
+        (out,) = export_encrypted(str(dest))
     assert dest.is_dir()
     assert out.exists()
 
@@ -84,10 +114,10 @@ def test_export_filename_matches_prune_glob(monkeypatch, tmp_path):
     """The filename must match prune()'s `vault-backup-*.json` glob or retention never fires."""
     monkeypatch.setenv("BW_SESSION", "fake-session-key")
     with patch("cvc.backup.exporter.subprocess.run", _writing_run()):
-        out = export_encrypted(str(tmp_path))
-    assert re.fullmatch(r"vault-backup-\d{8}T\d{6}Z\.json", out.name), out.name
+        (out,) = export_encrypted(str(tmp_path))
+    assert re.fullmatch(r"vault-backup-\d{8}T\d{6}Z-personal\.json", out.name), out.name
     assert out in set(tmp_path.glob("vault-backup-*.json"))
-    assert _FILENAME_FMT == "vault-backup-{ts}.json"
+    assert _FILENAME_FMT == "vault-backup-{ts}-{scope}.json"
 
 
 # ── subprocess invocation contract ────────────────────────────────────────────
@@ -150,16 +180,14 @@ def test_export_forwards_appdata_dir(monkeypatch, tmp_path):
 
 def test_export_raises_vault_error_on_nonzero_exit(monkeypatch, tmp_path):
     monkeypatch.setenv("BW_SESSION", "fake-session-key")
-    with patch("cvc.backup.exporter.subprocess.run",
-               return_value=_result(1, "You are not logged in.")), \
+    with patch("cvc.backup.exporter.subprocess.run", _list_ok_then(_result(1, "You are not logged in."))), \
             pytest.raises(VaultError, match="bw export failed"):
         export_encrypted(str(tmp_path))
 
 
 def test_export_error_includes_exit_code_and_stderr(monkeypatch, tmp_path):
     monkeypatch.setenv("BW_SESSION", "fake-session-key")
-    with patch("cvc.backup.exporter.subprocess.run",
-               return_value=_result(9, "vault is locked")), pytest.raises(VaultError) as exc:
+    with patch("cvc.backup.exporter.subprocess.run", _list_ok_then(_result(9, "vault is locked"))), pytest.raises(VaultError) as exc:
         export_encrypted(str(tmp_path))
     assert "exit 9" in str(exc.value)
     assert "vault is locked" in str(exc.value)
@@ -167,7 +195,7 @@ def test_export_error_includes_exit_code_and_stderr(monkeypatch, tmp_path):
 
 def test_export_leaves_no_file_on_failure(monkeypatch, tmp_path):
     monkeypatch.setenv("BW_SESSION", "fake-session-key")
-    with patch("cvc.backup.exporter.subprocess.run", return_value=_result(1, "nope")), \
+    with patch("cvc.backup.exporter.subprocess.run", _list_ok_then(_result(1, "nope"))), \
             pytest.raises(VaultError):
         export_encrypted(str(tmp_path))
     assert list(tmp_path.glob("vault-backup-*.json")) == []
@@ -175,15 +203,14 @@ def test_export_leaves_no_file_on_failure(monkeypatch, tmp_path):
 
 def test_export_raises_when_bw_missing(monkeypatch, tmp_path):
     monkeypatch.setenv("BW_SESSION", "fake-session-key")
-    with patch("cvc.backup.exporter.subprocess.run", side_effect=FileNotFoundError()), \
+    with patch("cvc.backup.exporter.subprocess.run", _list_ok_then(export_exc=FileNotFoundError())), \
             pytest.raises(VaultError, match="bw CLI not found"):
         export_encrypted(str(tmp_path))
 
 
 def test_export_raises_on_timeout(monkeypatch, tmp_path):
     monkeypatch.setenv("BW_SESSION", "fake-session-key")
-    with patch("cvc.backup.exporter.subprocess.run",
-               side_effect=subprocess.TimeoutExpired(cmd="bw", timeout=300)), \
+    with patch("cvc.backup.exporter.subprocess.run", _list_ok_then(export_exc=subprocess.TimeoutExpired(cmd="bw", timeout=300))), \
             pytest.raises(VaultError, match="timed out"):
         export_encrypted(str(tmp_path))
 
@@ -191,7 +218,7 @@ def test_export_raises_on_timeout(monkeypatch, tmp_path):
 def test_export_rejects_silent_empty_output(monkeypatch, tmp_path):
     """bw exiting 0 without writing anything must be a loud failure, not a 'backup'."""
     monkeypatch.setenv("BW_SESSION", "fake-session-key")
-    with patch("cvc.backup.exporter.subprocess.run", return_value=_result(0)), \
+    with patch("cvc.backup.exporter.subprocess.run", _list_ok_then(_result(0))), \
             pytest.raises(VaultError, match="produced no data"):
         export_encrypted(str(tmp_path))
 
@@ -210,7 +237,7 @@ def test_fresh_export_survives_prune(monkeypatch, tmp_path):
     from cvc.backup.exporter import prune
     monkeypatch.setenv("BW_SESSION", "fake-session-key")
     with patch("cvc.backup.exporter.subprocess.run", _writing_run()):
-        out = export_encrypted(str(tmp_path))
+        (out,) = export_encrypted(str(tmp_path))
     assert prune(str(tmp_path), retention_days=30) == 0
     assert out.exists()
 
@@ -315,8 +342,7 @@ def test_copy_to_onedrive_raises_on_sync_failure(tmp_path):
 
 def test_copy_to_onedrive_raises_on_timeout(tmp_path):
     src = _staged_export(tmp_path)
-    with patch("cvc.backup.exporter.subprocess.run",
-               side_effect=subprocess.TimeoutExpired(cmd="onedrive", timeout=120)), \
+    with patch("cvc.backup.exporter.subprocess.run", _list_ok_then(export_exc=subprocess.TimeoutExpired(cmd="onedrive", timeout=120))), \
             pytest.raises(RuntimeError, match="timed out after 120s"):
         copy_to_onedrive(src, str(tmp_path / "od"), _fake_onedrive_bin(tmp_path),
                          str(tmp_path / "conf"))
