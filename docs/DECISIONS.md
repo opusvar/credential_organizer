@@ -20,6 +20,16 @@ agent Vaultwarden account (separate login, separate vault).
 ## D4 — Recovery model  **[DECIDED 2026-09-09]**
 **Decision:** Encrypted export primary (Phase 3 `cvc-backup`) + Vaultwarden Emergency Access secondary.
 
+**CORRECTION [2026-10-31]:** the export was originally `bw export --format encrypted_json`
+*without* `--password`, which encrypts with the **account** key, not "the master password":
+rotating the account key or losing the account makes every such backup unreadable. It also
+omitted `--organizationid`, so only the personal vault (1 of 587 items) was exported.
+`cvc-backup` now writes one **password-protected** export per scope
+(`vault-backup-<ts>-personal.json`, `vault-backup-<ts>-org-<id>.json`) using the passphrase in
+`BACKUP_EXPORT_PASSWORD` (required; no account-restricted fallback), and fails if the
+per-scope item counts do not sum to `bw list items`. Restore needs only file + passphrase;
+keep the passphrase outside the vault.
+
 ## D5 — Agent-access scope & isolation  **[DECIDED 2026-09-09]**  ✅
 **Decision:** Option (b) variant — dedicated **Vaultwarden user account** for the broker (not a separate
 instance, but a separate login with its own vault). Personal vault is unreachable from the broker.
@@ -39,8 +49,8 @@ Caddy rejected from broker path — see D8.
 **Decision:** `ROTATION_MAX_AGE_DAYS=180`, `HIBP_ENABLED=true`.
 
 ## D9 — Off-host backup destination  **[DECIDED 2026-09-13]**
-**Decision:** Write encrypted vault exports to `/mnt/data/onedrive/dan_ai_tool_dock/cvc-backups/`
-on the OPi NVMe, then trigger `onedrive --sync` (abraunegg client, already installed at
+**Decision:** Write encrypted vault exports locally to `/mnt/data/cvc-backups/`, copy them to
+`/mnt/data/onedrive/dan_ai_tool_dock/cvc-backups/` on the OPi NVMe, then trigger `onedrive --sync` (abraunegg client, already installed at
 `/usr/local/bin/onedrive`) to push to cloud OneDrive.
 
 **CORRECTION [2026-09-13, implementation]:** this decision was originally written against the
@@ -55,8 +65,14 @@ the commands below use the real flags.
 - `onedrive` client is already installed, configured, and has a valid refresh token at
   `/home/admin/.config/onedrive/`. Sync dir is `/mnt/data/onedrive/`. No new OAuth setup required.
 - `dan_ai_tool_dock/` is the established namespace for AI-adjacent tool data on this OneDrive.
-- The export file is already encrypted with the vault master password (`bw export --format
-  encrypted_json`), so cloud storage of the raw file is safe without a separate passphrase.
+- The export files are password-protected (`bw export --format encrypted_json --password`,
+  passphrase from `BACKUP_EXPORT_PASSWORD`; see D4 correction), so cloud storage of the raw
+  files is safe.
+
+**CORRECTION [2026-10-31, F8]:** the unit had BACKUP_DIR equal to the staging dir, so the copy
+raised SameFileError and the sync was skipped — nothing ever left the host, while the job
+exited 0. Now the copy is skipped for same-file sources but the sync always runs, the unit's
+BACKUP_DIR is the separate `/mnt/data/cvc-backups`, and a copy/sync failure exits non-zero.
 - Alternatives rejected: rclone (would require OAuth setup from scratch); rsync to mesh node
   (off-node but not off-site; Windows/Mac nodes are not always-on storage); leaving data only on
   the PVC (single-disk failure = data loss, violates D4 intent).

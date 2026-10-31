@@ -1,5 +1,5 @@
 [Unit]
-Description=cvc vault backup — encrypted export to OneDrive
+Description=cvc vault backup — password-protected export to OneDrive
 Documentation=man:systemd.service(5) file:/home/admin/projects/credential_organizer/docs/DECISIONS.md
 After=network-online.target
 Wants=network-online.target
@@ -19,11 +19,13 @@ Environment=BITWARDENCLI_APPDATA_DIR=%h/.local/share/cvc/bw
 Environment=ONEDRIVE_BIN=/usr/local/bin/onedrive
 Environment=ONEDRIVE_CONFIG_DIR=%h/.config/onedrive
 # Absolute path — %h reaches /home/admin only, so it cannot be used to address
-# /mnt/data. This value must stay identical to BACKUP_DIR/ONEDRIVE_DEST_DIR in
-# backup.env (deploy/check-sync.sh asserts the example file agrees).
-# NOTE: directives are applied in order of appearance, so these Environment=
-# lines override the same keys from the EnvironmentFile above.
-Environment=BACKUP_DIR=/mnt/data/onedrive/dan_ai_tool_dock/cvc-backups
+# /mnt/data. BACKUP_DIR is the LOCAL primary copy and must be a different directory
+# from ONEDRIVE_DEST_DIR (the OneDrive staging dir set in backup.env): copy_to_onedrive()
+# copies the exports from here into the staging dir, then runs `onedrive --sync`.
+# NOTE: directives are applied in order of appearance, so this Environment= line
+# overrides BACKUP_DIR from the EnvironmentFile above.
+# backup.env must also define BACKUP_EXPORT_PASSWORD (export passphrase, F10).
+Environment=BACKUP_DIR=/mnt/data/cvc-backups
 # A systemd user unit gets a minimal PATH that excludes the mise toolchains. node
 # must be resolvable because `bw` is a #!/usr/bin/env node script, and PATH is one
 # of the few vars cvc.vault.client forwards into the bw subprocess.
