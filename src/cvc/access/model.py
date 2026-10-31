@@ -25,7 +25,15 @@ _GRANT_KEYS: dict[str, set[str] | None] = {
     "credential-store": {"system", "credential", "purposes"},
     "mqtt": {"system", "topics", "access"},
 }
-_SECRET_KEYS = frozenset({"password", "passwd", "secret", "token", "api_key", "private_key"})
+_SECRET_KEYS = frozenset({"password", "passwd", "secret", "token", "api_key", "private_key",
+                          "p12", "pin", "puk", "management_key"})
+DEVICE_KINDS = ("phone", "laptop", "desktop", "tablet")
+CERT_STORAGE = ("p12", "yubikey-piv")
+CERT_STATUS = ("pending", "active", "revoked", "expired")
+HWKEY_STATUS = ("active", "lost", "revoked", "retired")
+HWKEY_LOCATIONS = ("on-person", "home-safe", "offsite")
+HWKEY_USES = ("fido2-vaultwarden", "piv-device-cert", "recovery")
+_HEX = re.compile(r"^[0-9a-f]+$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -84,6 +92,8 @@ class Principal:
 
     @property
     def section(self) -> str:
+        if isinstance(self, Device):
+            return "devices"
         return "agents" if isinstance(self, Agent) else "machines"
 
     def active(self, today: dt.date | None = None) -> bool:
@@ -104,16 +114,60 @@ class Machine(Principal):
 
 
 @dataclass(frozen=True)
+class Person:
+    id: str
+    email: str | None = None
+
+
+@dataclass(frozen=True)
+class HardwareKey:
+    id: str
+    owner: str
+    model: str
+    serial: str                  # public identifier (stringified)
+    uses: tuple[str, ...]
+    location: str
+    enrolled: dt.date | None
+    status: str
+
+    @property
+    def usable(self) -> bool:
+        return self.status == "active"
+
+
+@dataclass(frozen=True)
+class DeviceCert:
+    storage: str
+    status: str
+    hardware_key: str | None = None
+    serial: str | None = None
+    fingerprint_sha256: str | None = None
+    not_after: dt.date | None = None
+
+
+@dataclass(frozen=True)
+class Device(Principal):
+    owner: str | None = None
+    kind: str | None = None
+    cert: DeviceCert | None = None
+    history: tuple[dict, ...] = ()
+
+
+@dataclass(frozen=True)
 class Registry:
     version: int
     systems: dict[str, System]
     roles: dict[str, Role]
     agents: dict[str, Agent]
     machines: dict[str, Machine]
+    people: dict[str, Person] = field(default_factory=dict)
+    hardware_keys: dict[str, HardwareKey] = field(default_factory=dict)
+    devices: dict[str, Device] = field(default_factory=dict)
 
     def principals(self) -> Iterator[Principal]:
         yield from self.agents.values()
         yield from self.machines.values()
+        yield from self.devices.values()
 
     def grants_for(self, principal: Principal) -> list[tuple[Role, Grant]]:
         return [(self.roles[r], g) for r in principal.roles for g in self.roles[r].grants]
@@ -227,7 +281,8 @@ def parse_registry(data: Any) -> Registry:
     if version != 1:
         errs.append(f"version: expected 1, got {version!r}")
     for k in data:
-        if k not in {"version", "systems", "roles", "agents", "machines"}:
+        if k not in {"version", "systems", "roles", "agents", "machines", "people",
+                     "hardware_keys", "devices"}:
             errs.append(f"{k}: unknown top-level key")
 
     systems: dict[str, System] = {}
@@ -299,6 +354,121 @@ def parse_registry(data: Any) -> Registry:
                 machines[pid] = Machine(pid, role_ids, expires, auth=auth,
                                         location=raw.get("location"))
 
+    people, hwkeys, devices = _parse_humans(data, roles, seen, errs)
     if errs:
         raise RegistryError(errs)
-    return Registry(1, systems, roles, agents, machines)
+    return Registry(1, systems, roles, agents, machines, people, hwkeys, devices)
+
+
+def _choice(v: Any, allowed: tuple[str, ...], path: str, errs: list[str]) -> str:
+    if v not in allowed:
+        errs.append(f"{path}: must be one of {', '.join(allowed)}, got {v!r}")
+    return str(v)
+
+
+def _hex(v: Any, path: str, errs: list[str], exact64: bool = False) -> str | None:
+    if v is None:
+        return None
+    h = str(v).strip().lower().replace(":", "")
+    if not _HEX.match(h) or (exact64 and len(h) != 64):
+        errs.append(f"{path}: must be {'64 ' if exact64 else ''}hex characters")
+    return h
+
+
+def _parse_humans(data: dict, roles: dict, seen: dict, errs: list[str]):
+    people: dict[str, Person] = {}
+    for pid, raw in _mapping(data, "people", errs).items():
+        raw = raw or {}
+        if not isinstance(raw, dict):
+            errs.append(f"people.{pid}: must be a mapping")
+            continue
+        people[pid] = Person(pid, raw.get("email"))
+
+    def owner(v: Any, path: str) -> str:
+        if v not in people:
+            errs.append(f"{path}: unknown person {v!r}")
+        return str(v)
+
+    hwkeys: dict[str, HardwareKey] = {}
+    serials: dict[str, str] = {}
+    for kid, raw in _mapping(data, "hardware_keys", errs).items():
+        p = f"hardware_keys.{kid}"
+        if not isinstance(raw, dict):
+            errs.append(f"{p}: must be a mapping")
+            continue
+        serial = raw.get("serial")
+        if serial is None or str(serial).strip() == "":
+            errs.append(f"{p}.serial: required")
+        serial = str(serial)
+        if serial in serials:
+            errs.append(f"{p}.serial: duplicate serial {serial} (also {serials[serial]})")
+        serials[serial] = kid
+        uses = raw.get("uses")
+        if not _str_list(uses) or not uses:
+            errs.append(f"{p}.uses: required non-empty list")
+            uses = []
+        for u in uses:
+            if u not in HWKEY_USES:
+                errs.append(f"{p}.uses: unknown use {u!r} ({', '.join(HWKEY_USES)})")
+        hwkeys[kid] = HardwareKey(
+            kid, owner(raw.get("owner"), f"{p}.owner"), str(raw.get("model") or ""), serial,
+            tuple(uses), _choice(raw.get("location"), HWKEY_LOCATIONS, f"{p}.location", errs),
+            _date(raw.get("enrolled"), f"{p}.enrolled", errs),
+            _choice(raw.get("status", "active"), HWKEY_STATUS, f"{p}.status", errs))
+
+    devices: dict[str, Device] = {}
+    for did, raw in _mapping(data, "devices", errs).items():
+        p = f"devices.{did}"
+        if did in seen:
+            errs.append(f"{p}: duplicate principal id {did!r} (also in {seen[did]})")
+        seen[did] = "devices"
+        if not isinstance(raw, dict):
+            errs.append(f"{p}: must be a mapping")
+            continue
+        cert = None
+        c = raw.get("cert")
+        if c is not None:
+            cp = f"{p}.cert"
+            if not isinstance(c, dict):
+                errs.append(f"{cp}: must be a mapping")
+            else:
+                storage = _choice(c.get("storage"), CERT_STORAGE, f"{cp}.storage", errs)
+                status = _choice(c.get("status", "pending"), CERT_STATUS, f"{cp}.status", errs)
+                hk = c.get("hardware_key")
+                if storage == "yubikey-piv":
+                    if hk is None:
+                        errs.append(f"{cp}.hardware_key: required when storage is yubikey-piv")
+                    elif hk not in hwkeys:
+                        errs.append(f"{cp}.hardware_key: unknown hardware key {hk!r}")
+                    elif status in ("pending", "active") and not hwkeys[hk].usable:
+                        errs.append(f"{cp}: {status} cert but hardware key {hk!r} is "
+                                    f"{hwkeys[hk].status} (revoke the cert)")
+                elif hk is not None:
+                    errs.append(f"{cp}.hardware_key: only valid with storage yubikey-piv")
+                cert = DeviceCert(storage, status, hk, _hex(c.get("serial"), f"{cp}.serial", errs),
+                                  _hex(c.get("fingerprint_sha256"),
+                                       f"{cp}.fingerprint_sha256", errs, exact64=True),
+                                  _date(c.get("not_after"), f"{cp}.not_after", errs))
+        history = raw.get("history") or []
+        if not isinstance(history, list):
+            errs.append(f"{p}.history: must be a list")
+            history = []
+        last = None
+        for i, h in enumerate(history):
+            if not isinstance(h, dict) or not h.get("event"):
+                errs.append(f"{p}.history[{i}]: must be a mapping with date and event")
+                continue
+            d = _date(h.get("date"), f"{p}.history[{i}].date", errs)
+            if d is None:
+                errs.append(f"{p}.history[{i}].date: required")
+            elif last and d < last:
+                errs.append(f"{p}.history: not in date order at [{i}] ({d} < {last})")
+            else:
+                last = d
+        devices[did] = Device(
+            did, _parse_roles_ref(raw.get("roles"), f"{p}.roles", roles, errs),
+            _date(raw.get("expires"), f"{p}.expires", errs),
+            owner=owner(raw.get("owner"), f"{p}.owner"),
+            kind=_choice(raw.get("kind"), DEVICE_KINDS, f"{p}.kind", errs),
+            cert=cert, history=tuple(h for h in history if isinstance(h, dict)))
+    return people, hwkeys, devices
