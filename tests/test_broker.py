@@ -191,7 +191,7 @@ def test_broker_audit_verify_requires_auth(tmp_path):
     # Good token
     r = client.get("/v1/audit/verify",
                    headers={"x-agent-id": "agent1", "authorization": f"Bearer goodtoken"})
-    assert r.status_code == 200
+    assert r.status_code == 200, r.text
     assert r.json()["intact"] is True
 
 
@@ -572,7 +572,7 @@ def test_readyz_ready_when_unlocked(tmp_path, monkeypatch):
     gen = _make_app_client(tmp_path)
     client, _ = next(gen)
     r = client.get("/readyz")
-    assert r.status_code == 200
+    assert r.status_code == 200, r.text
     assert r.json() == {"status": "ready", "vault": "unlocked"}
     assert r.headers["cache-control"] == "no-store"
 
@@ -634,4 +634,80 @@ def test_readyz_requires_no_auth(tmp_path, monkeypatch):
     gen = _make_app_client(tmp_path)
     client, _ = next(gen)
     r = client.get("/readyz")  # no x-agent-id, no authorization header
-    assert r.status_code == 200
+    assert r.status_code == 200, r.text
+
+
+# ── F11: measured body limit, backup single-flight, stderr logging ────────────
+
+def _chunks(*parts):
+    def gen():
+        for p in parts:
+            yield p
+    return gen()
+
+
+def test_body_limit_chunked_oversize_413(tmp_path):
+    gen = _make_app_client(tmp_path)
+    client, _ = next(gen)
+    r = client.post(
+        "/v1/credentials/fetch",
+        content=_chunks(b"x" * 5000, b"x" * 5000),  # no Content-Length (chunked)
+        headers={"x-agent-id": "agent1", "authorization": "Bearer goodtoken",
+                 "content-type": "application/json"},
+    )
+    assert r.status_code == 413
+
+
+def test_body_limit_chunked_small_body_passes_through(tmp_path):
+    gen = _make_app_client(tmp_path)
+    client, valid_uuid = next(gen)
+    body = json.dumps({"credential": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "purpose": "t"}).encode()
+    r = client.post(
+        "/v1/credentials/fetch",
+        content=_chunks(body[:10], body[10:]),
+        headers={"x-agent-id": "agent1", "authorization": "Bearer goodtoken",
+                 "content-type": "application/json"},
+    )
+    assert r.status_code == 403, r.text  # body was re-injected and parsed; ACL denied
+
+
+def test_backup_trigger_logs_redacted_stderr_tail(tmp_path, caplog):
+    import logging
+    gen = _make_app_client(tmp_path)
+    client, _ = next(gen)
+    _grant_backup(tmp_path)
+    stderr = "boom: export failed\nBW_SESSION=abc123\nmaster password wrong\n" + "z" * 5000
+    with patch("cvc.broker.app.subprocess.run",
+               return_value=_fake_completed(returncode=1, stdout="", stderr=stderr)), \
+         caplog.at_level(logging.WARNING, logger="cvc.broker.app"):
+        r = client.post("/v1/backup/trigger", json={"purpose": "scheduled"},
+                        headers={"x-agent-id": "agent1", "authorization": "Bearer goodtoken"})
+    assert r.status_code == 200, r.text
+    text = "\n".join(rec.getMessage() for rec in caplog.records if rec.levelno == logging.WARNING)
+    assert "backup_trigger_failed" in text
+    assert "abc123" not in text and "password" not in text
+    assert len(text) < 900
+
+
+def test_backup_trigger_single_flight_409(tmp_path):
+    from cvc.broker import app as app_mod
+    gen = _make_app_client(tmp_path)
+    client, _ = next(gen)
+    _grant_backup(tmp_path)
+    assert app_mod._backup_lock.acquire(blocking=False)
+    try:
+        with patch("cvc.broker.app.subprocess.run") as run:
+            r = client.post("/v1/backup/trigger", json={"purpose": "scheduled"},
+                            headers={"x-agent-id": "agent1", "authorization": "Bearer goodtoken"})
+        run.assert_not_called()
+    finally:
+        app_mod._backup_lock.release()
+    assert r.status_code == 409, r.text
+    assert "already in progress" in r.json()["detail"]
+    recs = [json.loads(l) for l in (tmp_path / "audit.jsonl").read_text().splitlines() if l.strip()]
+    assert recs[-1]["outcome"] == "deny:busy"
+    # lock released: next call proceeds
+    with patch("cvc.broker.app.subprocess.run", return_value=_fake_completed()):
+        r = client.post("/v1/backup/trigger", json={"purpose": "scheduled"},
+                        headers={"x-agent-id": "agent1", "authorization": "Bearer goodtoken"})
+    assert r.status_code == 200, r.text

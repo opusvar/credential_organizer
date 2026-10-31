@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging as _logging
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -158,6 +159,19 @@ _BACKUP_CAPABILITY = "backup"
 # credential fetch at ~15s on this host, so a whole-vault export runs in minutes. The cap
 # is a guard against a wedged `bw`, not an expected duration.
 _BACKUP_TIMEOUT = 600
+# Single-flight guard: one backup at a time (each holds a worker for minutes).
+_backup_lock = threading.Lock()
+_STDERR_TAIL = 500
+_SECRET_LINE = re.compile(r"password|passwd|session|token|secret|key|bearer|authorization",
+                          re.IGNORECASE)
+
+
+def _redacted_stderr_tail(stderr: str | None) -> str:
+    """Bounded tail of child stderr with any secret-looking line dropped."""
+    if not stderr:
+        return ""
+    lines = [ln for ln in stderr.splitlines()[-20:] if not _SECRET_LINE.search(ln)]
+    return "\n".join(lines)[-_STDERR_TAIL:]
 
 
 # ── middleware ───────────────────────────────────────────────────────────────
@@ -199,11 +213,25 @@ async def _request_log(request: Request, call_next):
 @app.middleware("http")
 async def _limit_body_size(request: Request, call_next):
     content_length = request.headers.get("content-length")
-    try:
-        if content_length and int(content_length) > _MAX_BODY:
-            return Response(status_code=413, content="Request body too large")
-    except ValueError:
-        pass  # malformed Content-Length; fall through to measured check
+    measured = content_length is None
+    if content_length is not None:
+        try:
+            if int(content_length) > _MAX_BODY:
+                return Response(status_code=413, content="Request body too large")
+        except ValueError:
+            measured = True  # malformed Content-Length: don't trust it, measure instead
+    if measured:
+        # No usable Content-Length (e.g. chunked): read incrementally, abort past the
+        # limit (never buffering more than _MAX_BODY + one chunk), then replay the body.
+        chunks: list[bytes] = []
+        total = 0
+        async for chunk in request.stream():
+            total += len(chunk)
+            if total > _MAX_BODY:
+                return Response(status_code=413, content="Request body too large")
+            chunks.append(chunk)
+        # Starlette's cached request replays `_body` to the downstream app.
+        request._body = b"".join(chunks)
     response = await call_next(request)
     return response
 
@@ -397,6 +425,19 @@ def trigger_backup(
                                 purpose=req.purpose, outcome=f"deny:{decision.reason}"))
         raise HTTPException(status_code=403, detail=decision.reason)
 
+    # 2b. Single-flight: refuse (and audit) a concurrent run instead of queueing workers.
+    if not _backup_lock.acquire(blocking=False):
+        audit.record(AuditEvent(agent=x_agent_id, credential=_BACKUP_CAPABILITY,
+                                purpose=req.purpose, outcome="deny:busy"))
+        raise HTTPException(status_code=409, detail="a backup is already in progress")
+    try:
+        return _run_backup(req, x_agent_id, audit, cfg)
+    finally:
+        _backup_lock.release()
+
+
+def _run_backup(req: TriggerRequest, x_agent_id: str, audit: AuditLog,
+                cfg: config.Config) -> JSONResponse:
     # 3. Audit the grant BEFORE the vault is touched, same invariant as a credential fetch.
     audit.record(AuditEvent(agent=x_agent_id, credential=_BACKUP_CAPABILITY,
                             purpose=req.purpose, outcome="allow"))
@@ -422,6 +463,12 @@ def trigger_backup(
         # The subprocess never started (no interpreter, fork failure, ENOMEM).
         _log.error("backup_trigger_spawn_failed", extra={"agent": x_agent_id}, exc_info=True)
         raise HTTPException(status_code=503, detail="could not start backup") from exc
+
+    if result.returncode != 0:
+        _log.warning(
+            "backup_trigger_failed exit_code=%s stderr_tail=%r",
+            result.returncode, _redacted_stderr_tail(result.stderr),
+        )
 
     _ops().record(
         "backup_triggered",
