@@ -149,7 +149,7 @@ def test_main_dry_run_prints_findings_and_skips_publish(base_env, capsys):
     items = [_login_item("1", "Old Bank", "Str0ng!Unique#1", days_ago=400)]
     with patch.object(remind, "BwClient", return_value=_fake_vault(items)), \
             patch.object(remind, "publish") as pub:
-        rc = remind.main(["--dry-run"])
+        rc = remind.main(["--dry-run", "--verbose"])
     assert rc == 0
     pub.assert_not_called()
     out = capsys.readouterr().out
@@ -247,8 +247,7 @@ def test_main_hibp_failure_is_non_fatal(base_env, monkeypatch, capsys):
     assert rc == 0
     pub.assert_called_once()
     err = capsys.readouterr().err
-    assert "HIBP check failed" in err
-    assert "Old Bank" in err
+    assert "Old Bank" not in err
 
 
 def test_main_hibp_skipped_entirely_when_vault_is_empty(base_env, monkeypatch):
@@ -303,3 +302,38 @@ def test_records_carry_no_password_into_findings(base_env):
     """Regression guard: Finding objects must never carry the password field."""
     rec = CredRecord("1", "X", "u", "abcdef")
     assert not hasattr(remind.evaluate([rec], max_age_days=180)[0], "password")
+
+
+# ── F13: logs carry counts only, never account identities ────────────────────
+
+SECRET = "SuperSecretBank-alice@example.test"
+
+
+def _f13_items():
+    return [
+        _login_item("1", SECRET, "abcdef", days_ago=400),
+        _login_item("2", "Other-bob", "abcdef", days_ago=1),
+    ]
+
+
+def test_default_output_contains_no_credential_names(base_env, monkeypatch, capsys):
+    monkeypatch.setenv("HIBP_ENABLED", "true")
+    published: list = []
+    with patch.object(remind, "BwClient", return_value=_fake_vault(_f13_items())), \
+            patch.object(remind, "times_pwned", side_effect=RuntimeError("boom")), \
+            patch.object(remind, "publish", side_effect=lambda f, c: published.extend(f)):
+        assert remind.main([]) == 0
+    cap = capsys.readouterr()
+    text = cap.out + cap.err
+    for needle in ("SuperSecretBank", "alice", "Other-bob", "bob"):
+        assert needle not in text
+    assert "2 credentials" in text
+    assert "HIBP failures: 2" in text
+    assert any(f.name == SECRET for f in published)  # MQTT payload unchanged
+
+
+def test_dry_run_without_verbose_hides_names(base_env, capsys):
+    with patch.object(remind, "BwClient", return_value=_fake_vault(_f13_items())), \
+            patch.object(remind, "publish"):
+        remind.main(["--dry-run"])
+    assert SECRET not in capsys.readouterr().out
