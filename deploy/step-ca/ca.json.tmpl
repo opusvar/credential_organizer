@@ -1,0 +1,67 @@
+{
+  "root": "/home/step/certs/root_ca.crt",
+  "federatedRoots": null,
+  "crt": "/home/step/certs/intermediate_ca.crt",
+  "key": "/home/step/secrets/intermediate_ca_key",
+  "address": ":9000",
+  "dnsNames": ["100.106.97.34", "orangepi6.humpback-krait.ts.net", "localhost"],
+  "logger": {"format": "json"},
+  "db": {"type": "badgerv2", "dataSource": "/home/step/db"},
+  "crl": {
+    "enabled": true,
+    "generateOnRevoke": true,
+    "cacheDuration": "24h",
+    "idpURL": "https://100.106.97.34:9000/1.0/crl"
+  },
+  "authority": {
+    "claims": {
+      "minTLSCertDuration": "5m",
+      "defaultTLSCertDuration": "2160h",
+      "maxTLSCertDuration": "2160h",
+      "disableRenewal": false,
+      "allowRenewalAfterExpiry": false
+    },
+    "provisioners": [
+      {
+        "type": "OIDC",
+        "name": "authentik",
+        "clientID": "__OIDC_CLIENT_ID__",
+        "clientSecret": "__OIDC_CLIENT_SECRET__",
+        "configurationEndpoint": "https://AUTHENTIK_HOST/application/o/step-ca/.well-known/openid-configuration",
+        "admins": ["nathan.smuckler@gmail.com"],
+        "listenAddress": ":10000",
+        "claims": {"defaultTLSCertDuration": "2160h", "maxTLSCertDuration": "2160h", "disableRenewal": false}
+      },
+      {
+        "type": "ACME",
+        "name": "yubikey-attest",
+        "challenges": ["device-attest-01"],
+        "attestationFormats": ["step"],
+        "claims": {"defaultTLSCertDuration": "2160h", "maxTLSCertDuration": "2160h", "disableRenewal": false}
+      },
+      {
+        "type": "ACME",
+        "name": "apple-attest",
+        "challenges": ["device-attest-01"],
+        "attestationFormats": ["apple"],
+        "claims": {"defaultTLSCertDuration": "2160h", "maxTLSCertDuration": "2160h", "disableRenewal": false}
+      },
+      {
+        "type": "SCEP",
+        "name": "ios-scep",
+        "forceCN": true,
+        "challenge": "__SCEP_CHALLENGE__",
+        "minimumPublicKeyLength": 2048,
+        "includeRoot": true,
+        "encryptionAlgorithmIdentifier": 2,
+        "claims": {"defaultTLSCertDuration": "2160h", "maxTLSCertDuration": "2160h", "disableRenewal": false}
+      }
+    ],
+    "backdate": "1m0s"
+  },
+  "tls": {
+    "minVersion": 1.2,
+    "maxVersion": 1.3,
+    "renegotiation": false
+  }
+}

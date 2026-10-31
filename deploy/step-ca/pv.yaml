@@ -1,0 +1,37 @@
+---
+# hostPath PV for step-ca state (/home/step inside the container).
+# Create the directory BEFORE applying, mode 700, owned by the image's uid 1000:
+#   sudo install -d -m 700 -o 1000 -g 1000 /mnt/data/pki
+# Holds: certs/root_ca.crt, certs/intermediate_ca.crt, secrets/intermediate_ca_key,
+# db/ (badger). The ROOT KEY must NOT live here (see README "Root-CA safety").
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pki-step-ca
+  labels:
+    app: step-ca
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes: ["ReadWriteOnce"]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath:
+    path: /mnt/data/pki
+    type: Directory   # must pre-exist with mode 700; never auto-created world-readable
+  claimRef:
+    namespace: pki
+    name: step-ca-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: step-ca-data
+  namespace: pki
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: ""
+  volumeName: pki-step-ca
+  resources:
+    requests:
+      storage: 1Gi

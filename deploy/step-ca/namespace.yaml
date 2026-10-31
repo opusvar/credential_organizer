@@ -1,0 +1,8 @@
+---
+# Namespace for the home certificate authority (step-ca).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pki
+  labels:
+    app.kubernetes.io/part-of: cvc
