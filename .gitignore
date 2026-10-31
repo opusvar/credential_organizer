@@ -28,6 +28,8 @@ audit/*.jsonl
 !audit/.gitkeep
 # ACL backups written by deploy/rotate-token.sh before each patch
 deploy/*.bak-*
+# Access registry may hold token hashes; only access/registry.example.yaml is committed
+access/registry.yaml
 
 # ── Python ──────────────────────────────────────────────────────────────────
 __pycache__/

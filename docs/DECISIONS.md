@@ -177,3 +177,17 @@ nodes (both sides hold Tailscale-issued certs; ACL restricts port 8710 to worker
 `100.73.65.49` and `100.127.180.96` only). Adding a custom CA and cert lifecycle management is
 engineering overhead with marginal security gain in a single-user home setup on a Tailnet.
 Current posture: direct hostPort binding to Tailscale IP + bearer token auth. No Caddy in path.
+
+## D12 — Access registry: roles for agents and machines  **[DECIDED 2026-10-31]**
+**Problem:** grants were scattered (broker ACL per agent, MQTT users by hand, worker access
+undocumented), so "who may access what" had no single answer.
+**Decision:** `access/registry.yaml` (gitignored; `access/registry.example.yaml` committed) is
+the source of truth: systems, roles (lists of grants), AI agents and machines. `cvc-access`
+validates it and generates artifacts. `deploy/broker-acl.yaml` becomes generated output
+(`cvc-access build broker-acl`); `import-acl` bootstraps a registry from the current ACL.
+- v1 enforces kinds `credential-store` (broker) and `mqtt`. `http`, `cluster`, `ssh` and
+  `service` are valid in the schema and in the model, but documented only; `check` flags their grants as "unenforced".
+- Sensors get per-device MQTT identities (one user each, topics scoped via `{id}`).
+- No secrets in the registry: only `token_sha256`. Machine passwords stay in Vaultwarden.
+- Expired agents generate `allow: []`. Generators register through `@register_builder`, so the
+  Mosquitto ACL and Mermaid graph arrive as new modules without changing the CLI dispatch.

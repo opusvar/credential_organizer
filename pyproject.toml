@@ -20,6 +20,7 @@ cvc-import = "cvc.importers.__main__:main"
 cvc-remind = "cvc.reminders.__main__:main"
 cvc-backup = "cvc.backup.__main__:main"
 cvc-broker = "cvc.broker.app:main"
+cvc-access = "cvc.access.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
