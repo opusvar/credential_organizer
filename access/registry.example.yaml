@@ -32,6 +32,17 @@ roles:
     grants:
       # access: read | write | readwrite. "{id}" expands to the machine's id.
       - {system: ha-mqtt, topics: ["sensors/{id}/#"], access: write}
+  home-assistant:
+    description: >
+      Home Assistant broker client. readwrite '#' is the safe default: HA subscribes to
+      discovery and all device topics and publishes commands. Narrow it only after listing
+      every topic HA uses; a missing grant silently breaks HA once the ACL is applied.
+    grants:
+      - {system: ha-mqtt, topics: ["#"], access: readwrite}
+  cvc-remind-publisher:
+    description: cvc-remind HA discovery + state (src/cvc/reminders/mqtt_publish.py)
+    grants:
+      - {system: ha-mqtt, topics: ["homeassistant/sensor/cvc_stale_credentials/config", "cvc/reminders/#"], access: write}
   worker-caller:
     description: Call inference workers (documented only)
     grants:
@@ -53,3 +64,9 @@ machines:        # sensors/devices: one MQTT user each
     roles: [sensor-publish]
     auth: {type: mqtt-user, username: garage-temp}   # password lives in Vaultwarden
     location: garage
+  home-assistant:   # migrate off the shared mqtt_user last
+    roles: [home-assistant]
+    auth: {type: mqtt-user, username: home-assistant}
+  cvc-remind:
+    roles: [cvc-remind-publisher]
+    auth: {type: mqtt-user, username: cvc-remind}
