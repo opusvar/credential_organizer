@@ -42,7 +42,10 @@ BROKER_PORT="8710"
 REMIND_ONCALENDAR="07:00:00"     # daily 07:00 UTC
 BACKUP_ONCALENDAR="02:00:00"     # weekly Sunday 02:00 UTC
 CVC_IMAGE="cvc:latest"           # still used by the Phase 4 broker deployment
-# Backup destination — the onedrive client's sync_dir staging path (D9 + D10).
+# Backup paths. BACKUP_DIR is the LOCAL primary copy; ONEDRIVE_DEST_DIR is the onedrive
+# client's sync_dir staging path (D9 + D10). They must differ: copy_to_onedrive() copies
+# from the former into the latter, then runs `onedrive --sync`.
+LOCAL_BACKUP_PATH="/mnt/data/cvc-backups"
 ONEDRIVE_DEST_PATH="/mnt/data/onedrive/dan_ai_tool_dock/cvc-backups"
 
 check_contains() {
@@ -276,21 +279,38 @@ done
 
 echo
 echo "── Phase 3 backup destination (D9 + D10) ────────────────────────────────"
-# The export is written straight into the staging dir inside the onedrive client's
-# sync_dir — no PVC and no hostPath any more, because the timer runs as admin on the
+# The export is written to the local BACKUP_DIR, then copied into the staging dir inside
+# the onedrive client's sync_dir — no PVC and no hostPath any more, because the timer runs as admin on the
 # host. Every failure in the sync path is non-fatal by design (the job still exits 0),
 # so a misconfiguration is invisible in the unit status and these checks are the only
 # thing that catches it.
-check_contains "backup.env.example BACKUP_DIR ($ONEDRIVE_DEST_PATH)" \
-    "$CVC/deploy/backup.env.example" "BACKUP_DIR=$ONEDRIVE_DEST_PATH"
+check_contains "backup.env.example BACKUP_DIR ($LOCAL_BACKUP_PATH)" \
+    "$CVC/deploy/backup.env.example" "BACKUP_DIR=$LOCAL_BACKUP_PATH"
 check_contains "backup.env.example ONEDRIVE_DEST_DIR ($ONEDRIVE_DEST_PATH)" \
     "$CVC/deploy/backup.env.example" "ONEDRIVE_DEST_DIR=$ONEDRIVE_DEST_PATH"
 check_contains "backup.env.example ONEDRIVE_BIN" \
     "$CVC/deploy/backup.env.example" "ONEDRIVE_BIN=/usr/local/bin/onedrive"
 check_contains "backup.env.example ONEDRIVE_CONFIG_DIR" \
     "$CVC/deploy/backup.env.example" "ONEDRIVE_CONFIG_DIR=/home/admin/.config/onedrive"
-check_contains "cvc-backup.service Environment=BACKUP_DIR ($ONEDRIVE_DEST_PATH)" \
-    "$CVC/deploy/cvc-backup.service" "Environment=BACKUP_DIR=$ONEDRIVE_DEST_PATH"
+check_contains "cvc-backup.service Environment=BACKUP_DIR ($LOCAL_BACKUP_PATH)" \
+    "$CVC/deploy/cvc-backup.service" "Environment=BACKUP_DIR=$LOCAL_BACKUP_PATH"
+
+# BACKUP_DIR and ONEDRIVE_DEST_DIR must be different directories (local vs OneDrive).
+ENV_DEST_DIR=$(grep -m1 '^ONEDRIVE_DEST_DIR=' "$CVC/deploy/backup.env.example" \
+    2>/dev/null | cut -d= -f2-)
+if [[ -n "$ENV_DEST_DIR" && "$ENV_DEST_DIR" != "$LOCAL_BACKUP_PATH" ]]; then
+    ok "ONEDRIVE_DEST_DIR differs from the local BACKUP_DIR"
+else
+    fail "ONEDRIVE_DEST_DIR is unset or equals the local BACKUP_DIR — the OneDrive copy would be a no-op"
+fi
+
+# BACKUP_EXPORT_PASSWORD is REQUIRED (password-protected exports, F10).
+check_contains "backup.env.example documents BACKUP_EXPORT_PASSWORD" \
+    "$CVC/deploy/backup.env.example" "BACKUP_EXPORT_PASSWORD=<"
+check_contains ".env.example documents BACKUP_EXPORT_PASSWORD" \
+    "$CVC/.env.example" "BACKUP_EXPORT_PASSWORD"
+check_contains "cvc-backup.service mentions BACKUP_EXPORT_PASSWORD" \
+    "$CVC/deploy/cvc-backup.service" "BACKUP_EXPORT_PASSWORD"
 
 # cvc-backup.service's Environment=BACKUP_DIR overrides the EnvironmentFile (later
 # directives win), so a disagreement means the env file is quietly ignored and exports
@@ -313,9 +333,11 @@ else
     ok "cvc-backup.service uses an absolute BACKUP_DIR (not %h-relative)"
 fi
 
-# setup-timers.sh must create the staging dir: a missing directory is a hard export
-# failure, and there is no DirectoryOrCreate safety net now that there is no hostPath.
-check_contains "setup-timers.sh creates the staging dir" \
+# setup-timers.sh must create both dirs: a missing directory is a hard export failure,
+# and there is no DirectoryOrCreate safety net now that there is no hostPath.
+check_contains "setup-timers.sh creates the local BACKUP_DIR" \
+    "$CVC/deploy/setup-timers.sh" "$LOCAL_BACKUP_PATH"
+check_contains "setup-timers.sh creates the OneDrive staging dir" \
     "$CVC/deploy/setup-timers.sh" "$ONEDRIVE_DEST_PATH"
 
 # The broker's on-demand trigger must be in the reviewable API contract — /docs is disabled

@@ -13,7 +13,7 @@
 #   1. Installs deploy/cvc-{remind,backup}.{service,timer} into ~/.config/systemd/user/
 #   2. systemctl --user daemon-reload
 #   3. Creates ~/.config/cvc (700) and ~/.local/share/cvc/bw (700)
-#   4. Creates the OneDrive staging dir (plain NVMe path — just mkdir -p)
+#   4. Creates the local backup dir (700) and the OneDrive staging dir (mkdir -p)
 #   5. Prints the commands to create remind.env / backup.env. It NEVER creates them —
 #      they hold real credentials.
 #   6. Enables and starts both timers, then shows the schedule
@@ -47,7 +47,8 @@ UNIT_DIR="$HOME/.config/systemd/user"
 CONFIG_DIR="$HOME/.config/cvc"
 BW_DATA_DIR="$HOME/.local/share/cvc/bw"
 BIN_DIR="$HOME/.local/bin"
-BACKUP_DIR="/mnt/data/onedrive/dan_ai_tool_dock/cvc-backups"
+BACKUP_DIR="/mnt/data/cvc-backups"    # local primary copy (matches cvc-backup.service)
+ONEDRIVE_DEST_DIR="/mnt/data/onedrive/dan_ai_tool_dock/cvc-backups"
 ONEDRIVE_CONF="$HOME/.config/onedrive"
 
 UNITS=(cvc-remind.service cvc-remind.timer cvc-backup.service cvc-backup.timer)
@@ -320,22 +321,34 @@ section "4. Backup destination"
 # Plain NVMe path inside the onedrive client's sync_dir — no PVC, no hostPath, and no
 # chown: the timer runs AS admin, so the old "chown 1000:1000" step from the CronJob
 # era is gone.
-if [[ -d "$BACKUP_DIR" ]]; then
-    ok "staging dir exists: $BACKUP_DIR"
+if [[ -d "$ONEDRIVE_DEST_DIR" ]]; then
+    ok "staging dir exists: $ONEDRIVE_DEST_DIR"
 elif [[ "$DRY_RUN" -eq 1 ]]; then
-    warn "dry-run — would run: mkdir -p $BACKUP_DIR"
-elif mkdir -p "$BACKUP_DIR"; then
-    ok "created $BACKUP_DIR"
+    warn "dry-run — would run: mkdir -p $ONEDRIVE_DEST_DIR"
+elif mkdir -p "$ONEDRIVE_DEST_DIR"; then
+    ok "created $ONEDRIVE_DEST_DIR"
 else
-    fail "could not create $BACKUP_DIR as $(id -un) — run:"
-    echo "        sudo mkdir -p $BACKUP_DIR && sudo chown $(id -u):$(id -g) $BACKUP_DIR"
+    fail "could not create $ONEDRIVE_DEST_DIR as $(id -un) — run:"
+    echo "        sudo mkdir -p $ONEDRIVE_DEST_DIR && sudo chown $(id -u):$(id -g) $ONEDRIVE_DEST_DIR"
 fi
 
-if [[ -d "$BACKUP_DIR" && -w "$BACKUP_DIR" ]]; then
+if [[ -d "$ONEDRIVE_DEST_DIR" && -w "$ONEDRIVE_DEST_DIR" ]]; then
     ok "staging dir is writable by $(id -un)"
-elif [[ -d "$BACKUP_DIR" ]]; then
+elif [[ -d "$ONEDRIVE_DEST_DIR" ]]; then
     fail "staging dir is NOT writable by $(id -un) — bw export will fail with EACCES"
-    echo "        sudo chown $(id -u):$(id -g) $BACKUP_DIR"
+    echo "        sudo chown $(id -u):$(id -g) $ONEDRIVE_DEST_DIR"
+fi
+
+# Local primary copy (BACKUP_DIR). Holds password-protected exports, so mode 700.
+if [[ -d "$BACKUP_DIR" ]]; then
+    ok "local backup dir exists: $BACKUP_DIR"
+elif [[ "$DRY_RUN" -eq 1 ]]; then
+    warn "dry-run — would run: mkdir -p $BACKUP_DIR && chmod 700 $BACKUP_DIR"
+elif mkdir -p "$BACKUP_DIR" && chmod 700 "$BACKUP_DIR"; then
+    ok "created $BACKUP_DIR (700)"
+else
+    fail "could not create $BACKUP_DIR as $(id -un) — run:"
+    echo "        sudo mkdir -p $BACKUP_DIR && sudo chown $(id -u):$(id -g) $BACKUP_DIR && chmod 700 $BACKUP_DIR"
 fi
 
 # ── 5. env files (reported, never created) ────────────────────────────────────
@@ -356,6 +369,11 @@ for pair in "remind.env:remind.env.example" "backup.env:backup.env.example"; do
         # fails authentication, which looks like a credential problem.
         if grep -q '<' "$CONFIG_DIR/$f" 2>/dev/null; then
             warn "$f still contains <placeholder> values — the run will fail auth"
+        fi
+        # Key NAME only — never read or print the value. Warn, don't fail.
+        if [[ "$f" == backup.env ]] && ! grep -q '^BACKUP_EXPORT_PASSWORD=' "$CONFIG_DIR/$f" 2>/dev/null; then
+            warn "$f has no BACKUP_EXPORT_PASSWORD — cvc-backup will fail until it is set"
+            warn "  (see deploy/backup.env.example)"
         fi
     else
         fail "$CONFIG_DIR/$f is MISSING"
@@ -416,7 +434,7 @@ section "Summary"
 echo "  Units:      $UNIT_DIR/cvc-{remind,backup}.{service,timer}"
 echo "  Env files:  $CONFIG_DIR/{remind,backup}.env  (mode 600, not in git)"
 echo "  bw appdata: $BW_DATA_DIR"
-echo "  Backups:    $BACKUP_DIR"
+echo "  Backups:    $BACKUP_DIR (local) -> $ONEDRIVE_DEST_DIR (OneDrive)"
 echo "  cvc-remind: daily 07:00 UTC"
 echo "  cvc-backup: weekly Sunday 02:00 UTC"
 echo "  Logs:       journalctl --user -u cvc-remind   /   -u cvc-backup"
