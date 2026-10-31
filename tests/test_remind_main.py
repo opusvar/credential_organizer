@@ -26,8 +26,12 @@ def _login_item(item_id: str, name: str, password: str, days_ago: int = 5) -> di
         "id": item_id,
         "type": 1,
         "name": name,
-        "revisionDate": _iso(days_ago),
-        "login": {"username": f"{item_id}@example.test", "password": password},
+        "revisionDate": _iso(1),  # edits bump this; must not affect credential age
+        "login": {
+            "username": f"{item_id}@example.test",
+            "password": password,
+            "passwordRevisionDate": _iso(days_ago),
+        },
     }
 
 
@@ -53,22 +57,32 @@ def _fake_vault(items: list[dict]) -> MagicMock:
 
 # ── _parse_rotated ────────────────────────────────────────────────────────────
 
-def test_parse_rotated_uses_revision_date():
-    item = {"revisionDate": "2026-01-02T03:04:05Z"}
+def test_parse_rotated_uses_password_revision_date():
+    item = {
+        "revisionDate": "2026-09-01T00:00:00Z",
+        "creationDate": "2025-01-01T00:00:00Z",
+        "login": {"passwordRevisionDate": "2026-01-02T03:04:05Z"},
+    }
     got = remind._parse_rotated(item)
-    assert got is not None
-    assert (got.year, got.month, got.day) == (2026, 1, 2)
-    assert got.tzinfo is UTC
+    assert got == datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
 
 
-def test_parse_rotated_falls_back_to_creation_date():
-    item = {"creationDate": "2025-06-07T00:00:00Z"}
-    got = remind._parse_rotated(item)
-    assert got is not None and got.year == 2025
+def test_parse_rotated_null_password_revision_falls_back_to_creation_not_revision():
+    item = {
+        "revisionDate": "2026-09-01T00:00:00Z",
+        "creationDate": "2025-06-07T00:00:00Z",
+        "login": {"passwordRevisionDate": None},
+    }
+    assert remind._parse_rotated(item) == datetime(2025, 6, 7, tzinfo=UTC)
+
+
+def test_parse_rotated_never_uses_revision_date():
+    item = {"revisionDate": "2026-09-01T00:00:00Z", "login": {}}
+    assert remind._parse_rotated(item) is None
 
 
 def test_parse_rotated_returns_none_on_garbage():
-    assert remind._parse_rotated({"revisionDate": "not-a-date"}) is None
+    assert remind._parse_rotated({"login": {"passwordRevisionDate": "not-a-date"}}) is None
     assert remind._parse_rotated({}) is None
 
 
