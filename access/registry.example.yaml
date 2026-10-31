@@ -1,0 +1,55 @@
+# Access registry — single source of truth for "who may access what".
+# Copy to access/registry.yaml (gitignored) and edit. Validate with:
+#   cvc-access validate        cvc-access check
+# Generate the broker ACL (manual step, then restart/reload the broker):
+#   cvc-access build broker-acl --out deploy/broker-acl.yaml
+#
+# NO SECRETS here: keys named password/secret/token are rejected. Agents carry only the
+# sha256 of their service token; machine passwords live in Vaultwarden.
+version: 1
+
+systems:
+  # Enforced kinds (v1): credential-store, mqtt.
+  vaultwarden: {kind: credential-store}          # reached via the cvc broker
+  ha-mqtt: {kind: mqtt, host: 192.168.1.208, port: 1883}
+  # Documented-only kinds (http, cluster, ssh, service): free-form fields, no generator,
+  # `cvc-access check` reports their grants as "unenforced".
+  workers: {kind: http, hosts: [100.73.65.49, 100.127.180.96]}
+
+roles:
+  billing-agent:
+    description: Pay invoices on the Acme portal
+    grants:
+      # credential: a Vaultwarden item UUID, or a capability sentinel ("backup").
+      # purposes: required, non-empty; ["*"] = any purpose.
+      - {system: vaultwarden, credential: 11111111-2222-3333-4444-555555555555, purposes: [pay-invoice]}
+  backup-runner:
+    description: May trigger the encrypted vault export
+    grants:
+      - {system: vaultwarden, credential: backup, purposes: ["*"]}
+  sensor-publish:
+    description: Each sensor publishes only under its own topic tree
+    grants:
+      # access: read | write | readwrite. "{id}" expands to the machine's id.
+      - {system: ha-mqtt, topics: ["sensors/{id}/#"], access: write}
+  worker-caller:
+    description: Call inference workers (documented only)
+    grants:
+      - {system: workers, paths: ["/v1/*"]}
+
+agents:          # AI agents (broker principals)
+  playwright-billing:
+    roles: [billing-agent]
+    token_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+    owner: nathan
+  personal-dashboard:
+    roles: [worker-caller, backup-runner]
+    token_sha256: "1111111111111111111111111111111111111111111111111111111111111111"
+    owner: nathan
+    expires: 2027-01-31      # optional; after this date the agent gets allow: []
+
+machines:        # sensors/devices: one MQTT user each
+  garage-temp:
+    roles: [sensor-publish]
+    auth: {type: mqtt-user, username: garage-temp}   # password lives in Vaultwarden
+    location: garage
