@@ -72,6 +72,9 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="cvc-remind")
     p.add_argument("--dry-run", action="store_true",
                    help="evaluate and print findings; do not publish to MQTT")
+    p.add_argument("--verbose", action="store_true",
+                   help="also list per-credential names and reasons (interactive use only; "
+                        "never enable under systemd, output reaches the journal)")
     args = p.parse_args(argv)
 
     cfg = config.load()
@@ -84,6 +87,7 @@ def main(argv: list[str] | None = None) -> int:
 
     findings = evaluate(records, max_age_days=cfg.rotation_max_age_days)
 
+    hibp_failures = 0
     if cfg.hibp_enabled and records:
         with httpx.Client(timeout=10.0) as http:
             for rec in records:
@@ -92,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     count = times_pwned(rec.password, client=http)
                 except Exception as exc:  # noqa: BLE001
-                    print(f"WARNING: HIBP check failed for {rec.name!r}: {exc}", file=sys.stderr)
+                    hibp_failures += 1
                     continue
                 if count:
                     # Add breach reason to existing finding or create a new one.
@@ -106,9 +110,19 @@ def main(argv: list[str] | None = None) -> int:
                             reasons=[f"breached: found {count}x in HIBP"],
                         ))
 
-    print(f"cvc-remind: {len(records)} credentials, {len(findings)} findings")
+    # Counts only: account identities must never reach the journal.
+    by_reason = {k: 0 for k in ("stale", "reused", "weak", "breached")}
     for f in findings:
-        print(f"  {f.name}: {', '.join(f.reasons)}")
+        for r in f.reasons:
+            key = r.split(":", 1)[0].split(" ", 1)[0].lower()
+            if key in by_reason:
+                by_reason[key] += 1
+    breakdown = ", ".join(f"{k}={v}" for k, v in by_reason.items())
+    print(f"cvc-remind: {len(records)} credentials, {len(findings)} findings ({breakdown})")
+    print(f"cvc-remind: HIBP failures: {hibp_failures}")
+    if args.verbose:
+        for f in findings:
+            print(f"  {f.name}: {', '.join(f.reasons)}")
 
     if args.dry_run:
         return 0
