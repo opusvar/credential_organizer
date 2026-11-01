@@ -84,9 +84,10 @@ def _revoke_cert(dev: dict, today: dt.date, reason: str) -> bool:
 
 # ── owner hardware-key invariant (D14) ──────────────────────────────────────
 def active_owner_keys(data: dict) -> list[str]:
-    """Ids of active hardware keys whose owner is a person with tier owner."""
+    """Ids of active hardware keys whose owner is an active (not taken-over) owner-tier person."""
     people = data.get("people") or {}
-    owners = {pid for pid, p in people.items() if isinstance(p, dict) and p.get("tier") == "owner"}
+    owners = {pid for pid, p in people.items() if isinstance(p, dict) and p.get("tier") == "owner"
+              and p.get("status", "active") == "active"}
     return sorted(k for k, v in (data.get("hardware_keys") or {}).items()
                   if isinstance(v, dict) and v.get("owner") in owners
                   and v.get("status", "active") == "active")
