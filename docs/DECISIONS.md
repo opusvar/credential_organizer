@@ -288,9 +288,44 @@ Timeline from initiation:
 State lives in `~/.local/state/cvc/takeover/`: `takeovers.json` plus an append-only,
 hash-chained `history.jsonl` (`cvc takeover verify-history`).
 
+**ADDENDUM [2026-11-01] — veto, key role, estate recovery kit:**
+- **Veto:** any active owner other than the target can stop a pending takeover with their own
+  YubiKey (`cvc takeover veto <id> --owner <id>`), which sets status `vetoed`. Vaultwarden only
+  accepts a grant reject from the grantor's (target's) account, so a veto cannot close View
+  access. The veto prints a warning, and sends it to the target, the initiator and every owner:
+  View access persists until the target rejects the grants (`cvc takeover cancel`, or in
+  Vaultwarden).
+- **Primary vs backup key:** an explicit hardware-key `role: primary|backup` in the registry is
+  used when present. Otherwise a key `on-person` counts as primary and one in `home-safe` or
+  `offsite` as a backup. The role is recorded on the takeover and shown in the banner.
+- **Estate recovery kit:** `cvc takeover estate-kit generate --owner <id>` (needs that owner's
+  YubiKey) prints a 150-bit code (30 Crockford base32 symbols) once, to be printed and kept in
+  a safety deposit box. Only a scrypt hash is stored (`estate_kit.json`, 0600). It is a step-5
+  alternative (`start --estate-kit`, path `estate-kit`). The initiator still passes steps 1-4.
+  It starts the 180-day path against any owner target and notifies every owner on every
+  channel (`CVC_TAKEOVER_WEBHOOK` may list several URLs). It is single use: when the start
+  succeeds, the hash is destroyed and the kit is marked used, and a new kit must be generated
+  and printed. A failed attempt does not use it up. It is never auto-replaced, so whoever used
+  it does not get a fresh code.
+
 ## D16 — Access classification matrix  **[DECIDED 2026-11-01]**
 Two axes (data public/internal/private/secret × action read/relay/write/act/delegate), tier ceilings (scoped/low/medium/high/assistant), effective = min(agent, sponsor) ∩ role grants, secret only via broker single-use approved fetch; guest/family are sponsors, not tiers. See [ACCESS-CLASSIFICATION.md](ACCESS-CLASSIFICATION.md).
 Sponsored guest and family agents are not separate tiers: they use the agent tier ladder plus a `sponsor` (human) attribute (approved by Nathan).
 
 ## D17 — Voluntary delegation  **[DECIDED 2026-11-01]**
 `cvc delegate start` wizard: strong identity, itemised preview (items above the recipient ceiling are revoked, never escalated), 48h revoke window, then execution via the takeover-completion machinery with the D14 owner-key guard. See [DELEGATION.md](DELEGATION.md).
+
+**ADDENDUM [2026-11-01] — implementation (`src/cvc/delegate/`):** `cvc delegate
+start|revoke|decline|status|complete|faq|verify-history` (also `cvc-delegate`). Ceilings use a
+person-tier rank (guest/media-only 0, low 1, medium 2, high 3, admin 4, owner 5). Requirements
+per item: vault item by data class (public/internal low, private medium, secret owner); org
+membership medium (owner/admin role in the org: admin); an owner's hardware key owner;
+device low (its cert is always revoked and re-issued); a grant the delegator gave = the
+grantee's tier. Agents always transfer, capped at min(agent tier, recipient agent ceiling:
+low/medium/high), and expire with a guest recipient. Selecting "roles" drops the delegator to
+`low`; it is never raised on the recipient. Above-ceiling hardware keys are set `revoked`,
+grants get `expires` = execution date, and vault/org items get a revoke step in the plan. The D14
+guard is dry-run at section selection and enforced again at execution. A failure there sets
+status `refused`. `complete` needs no extra factor (it was authorised at start and had the
+48 h window), but it recomputes the diff. State is in `~/.local/state/cvc/delegate/`, with the
+same hash-chained history as takeover.

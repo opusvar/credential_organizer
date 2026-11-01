@@ -25,6 +25,7 @@ cvc-access = "cvc.access.cli:main"
 cvc-tiergate = "cvc.tiergate.app:main"
 cvc = "cvc.takeover.__main__:main"            # `cvc takeover ...` (D15)
 cvc-takeover = "cvc.takeover.__main__:main"
+cvc-delegate = "cvc.delegate.__main__:main"      # also `cvc delegate ...` (D17)
 
 [build-system]
 requires = ["setuptools>=68"]

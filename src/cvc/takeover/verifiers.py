@@ -92,17 +92,20 @@ def verify_device_cert(leaf_pem: bytes, chain_pems: list[bytes], root_pem: bytes
     return CertIdentity(fp, tiers[0], persons[0], format(leaf.serial_number, "x"))
 
 
-def check_cert_registry(ident: CertIdentity, data: dict, person: str, today: date) -> str:
-    """Cert must be the owner-tier cert of ``person`` and active in the registry. Returns the
-    device id."""
-    if ident.tier != "owner":
-        raise TakeoverError(f"refused: certificate tier is {ident.tier!r}; takeover needs an "
-                            "owner-tier device certificate")
+def check_cert_registry(ident: CertIdentity, data: dict, person: str, today: date,
+                        tier: str | None = "owner") -> str:
+    """Cert must be the ``tier`` cert of ``person`` and active in the registry. Returns the
+    device id. ``tier=None`` (delegation) accepts any tier, as long as the cert's tier equals
+    the person's registry tier."""
+    p = (data.get("people") or {}).get(person)
+    want = tier if tier is not None else (p or {}).get("tier") if isinstance(p, dict) else None
+    if ident.tier != want:
+        raise TakeoverError(f"refused: certificate tier is {ident.tier!r}; need a "
+                            f"{want or 'registered'}-tier device certificate")
     if ident.person != person:
         raise TakeoverError(f"refused: certificate belongs to {ident.person!r}, not {person!r}")
-    p = (data.get("people") or {}).get(person)
-    if not isinstance(p, dict) or p.get("tier") != "owner" or p.get("status", "active") != "active":
-        raise TakeoverError(f"refused: {person!r} is not an active owner-tier person")
+    if not isinstance(p, dict) or p.get("tier") != want or p.get("status", "active") != "active":
+        raise TakeoverError(f"refused: {person!r} is not an active {want}-tier person")
     for did, dev in (data.get("devices") or {}).items():
         cert = (dev or {}).get("cert") or {}
         if str(cert.get("fingerprint_sha256") or "").lower() != ident.fingerprint:
