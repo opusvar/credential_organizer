@@ -20,6 +20,7 @@ from cvc.access.model import (
     CERT_STORAGE,
     DEVICE_KINDS,
     HWKEY_LOCATIONS,
+    PERSON_TIERS,
     RegistryError,
     parse_registry,
 )
@@ -81,6 +82,44 @@ def _revoke_cert(dev: dict, today: dt.date, reason: str) -> bool:
     return True
 
 
+# ── owner hardware-key invariant (D14) ──────────────────────────────────────
+def active_owner_keys(data: dict) -> list[str]:
+    """Ids of active hardware keys whose owner is a person with tier owner."""
+    people = data.get("people") or {}
+    owners = {pid for pid, p in people.items() if isinstance(p, dict) and p.get("tier") == "owner"}
+    return sorted(k for k, v in (data.get("hardware_keys") or {}).items()
+                  if isinstance(v, dict) and v.get("owner") in owners
+                  and v.get("status", "active") == "active")
+
+
+def _guard_owner_keys(before: list[str], data: dict, what: str) -> None:
+    """Refuse an edit that would leave zero active owner keys. No override (D14)."""
+    if before and not active_owner_keys(data):
+        raise EditError(
+            f"refused: {what} would leave zero active owner hardware keys "
+            f"(currently active: {', '.join(before)}). The owner YubiKey is the root of "
+            "recovery (D11/D14): enroll and activate a replacement first "
+            "(`cvc-access hwkey enroll` / `hwkey replace`), or transfer the key to another "
+            "owner (`hwkey transfer`). There is no --force for this rule.")
+
+
+def _hwkey(data: dict, kid: str) -> dict:
+    key = (data.get("hardware_keys") or {}).get(kid)
+    if key is None:
+        raise EditError(f"unknown hardware key {kid!r}")
+    return key
+
+
+def _key_certs(data: dict, kid: str) -> list[tuple[str, dict]]:
+    return [(d, dev) for d, dev in (data.get("devices") or {}).items()
+            if ((dev or {}).get("cert") or {}).get("storage") == "yubikey-piv"
+            and ((dev or {}).get("cert") or {}).get("hardware_key") == kid]
+
+
+def _oob(lines: list[str]) -> list[str]:
+    return ["Out-of-band checklist (NOT executed):", *[f"  [ ] {x}" for x in lines]]
+
+
 def hwkey_enroll(data: dict, a: argparse.Namespace, today: dt.date) -> str:
     keys = _section(data, "hardware_keys")
     if a.id in keys:
@@ -96,16 +135,126 @@ def hwkey_enroll(data: dict, a: argparse.Namespace, today: dt.date) -> str:
 
 
 def hwkey_revoke(data: dict, a: argparse.Namespace, today: dt.date) -> str:
-    key = (data.get("hardware_keys") or {}).get(a.id)
-    if key is None:
-        raise EditError(f"unknown hardware key {a.id!r}")
+    key = _hwkey(data, a.id)
+    before = active_owner_keys(data)
     key["status"] = a.reason
+    _guard_owner_keys(before, data, f"hwkey revoke {a.id}")
+    _append(key, {"date": today, "event": a.reason})
     n = 0
     for dev in (data.get("devices") or {}).values():
         cert = (dev or {}).get("cert") or {}
         if cert.get("storage") == "yubikey-piv" and cert.get("hardware_key") == a.id:
             n += _revoke_cert(dev, today, f"hardware key {a.id} {a.reason}")
     return f"hardware key {a.id} marked {a.reason}; revoked {n} device cert(s)"
+
+
+def hwkey_suspend(data: dict, a: argparse.Namespace, today: dt.date) -> str:
+    """Lock a key out (reversible). Certs on it stay recorded but the key is not usable."""
+    key = _hwkey(data, a.id)
+    if key.get("status", "active") != "active":
+        raise EditError(f"hardware key {a.id!r} is {key.get('status')}, not active")
+    before = active_owner_keys(data)
+    key["status"] = "suspended"
+    _guard_owner_keys(before, data, f"hwkey suspend {a.id}")
+    entry = {"date": today, "event": "suspended"}
+    if a.reason:
+        entry["reason"] = a.reason
+    _append(key, entry)
+    return "\n".join([f"suspended hardware key {a.id} (resume with `hwkey resume {a.id}`)",
+                      *_oob([(f"remove/disable {a.id}'s FIDO2 credential in Vaultwarden and "
+                             "Authentik while suspended"),
+                             (f"device certs on {a.id} are NOT revoked; `step ca revoke` them "
+                             "if the key may be compromised")])])
+
+
+def hwkey_resume(data: dict, a: argparse.Namespace, today: dt.date) -> str:
+    key = _hwkey(data, a.id)
+    if key.get("status") != "suspended":
+        raise EditError(f"hardware key {a.id!r} is {key.get('status', 'active')}, not suspended")
+    key["status"] = "active"
+    _append(key, {"date": today, "event": "resumed"})
+    return "\n".join([f"resumed hardware key {a.id}",
+                      *_oob([(f"re-register {a.id} as a FIDO2 key in Vaultwarden/Authentik "
+                             "if it was removed during the suspension")])])
+
+
+def hwkey_transfer(data: dict, a: argparse.Namespace, today: dt.date) -> str:
+    key = _hwkey(data, a.id)
+    target = (data.get("people") or {}).get(a.to)
+    if not isinstance(target, dict):
+        raise EditError(f"unknown person {a.to!r}")
+    if target.get("tier") != "owner":
+        raise EditError(f"refused: {a.to!r} has tier {target.get('tier')}; hardware keys may "
+                        "only be transferred to an owner-tier person")
+    src = key.get("owner")
+    if src == a.to:
+        raise EditError(f"hardware key {a.id!r} already belongs to {a.to!r}")
+    before = active_owner_keys(data)
+    key["owner"] = a.to
+    _guard_owner_keys(before, data, f"hwkey transfer {a.id}")
+    _append(key, {"date": today, "event": "transferred", "from": src, "to": a.to})
+    certs = [d for d, _ in _key_certs(data, a.id)]
+    lines = [(f"`ykman fido credentials list` on {a.id}; delete {src}'s passkeys "
+             "(`ykman fido credentials delete <id>`)"),
+             (f"re-register {a.id} as {a.to}'s FIDO2 key in Vaultwarden and Authentik; remove it "
+             f"from {src}'s accounts"),
+             ("change the PIV PIN/PUK and FIDO2 PIN (`ykman piv access change-pin`, "
+             "`ykman fido access change-pin`)")]
+    if certs:
+        lines.append(f"device cert(s) on {a.id} ({', '.join(certs)}) were issued to {src}: "
+                     "`step ca revoke <serial>` and `cvc-access device transfer` them")
+    return "\n".join([f"transferred hardware key {a.id}: {src} -> {a.to}", *_oob(lines)])
+
+
+def hwkey_replace(data: dict, a: argparse.Namespace, today: dt.date) -> str:
+    """Retire OLD in favour of NEW. NEW must exist and be active (or be enrolled here)."""
+    old = _hwkey(data, a.old)
+    keys = data["hardware_keys"]
+    if a.new == a.old:
+        raise EditError("--new must differ from the old key")
+    if old.get("status", "active") not in ("active", "suspended"):
+        raise EditError(f"hardware key {a.old!r} is already {old.get('status')}")
+    msgs = []
+    if a.new not in keys:
+        if not (a.serial and a.model):
+            raise EditError(f"hardware key {a.new!r} does not exist; enroll it first or pass "
+                            "--serial and --model to enroll it here")
+        keys[a.new] = {"owner": old.get("owner"), "model": a.model, "serial": _serial(a.serial),
+                       "uses": list(old.get("uses") or []),
+                       "location": a.location or old.get("location"), "enrolled": today,
+                       "status": "active", "history": [{"date": today, "event": "enrolled"}]}
+        msgs.append(f"enrolled hardware key {a.new}")
+    new = keys[a.new]
+    if new.get("status", "active") != "active":
+        raise EditError(f"refused: replacement key {a.new!r} is {new.get('status')}; it must "
+                        "be active before the old key is retired")
+    before = active_owner_keys(data)
+    old["status"] = "retired"
+    _guard_owner_keys(before, data, f"hwkey replace {a.old}")
+    _append(old, {"date": today, "event": "retired", "replaced_by": a.new})
+    _append(new, {"date": today, "event": "replaces", "key": a.old})
+    certs = _key_certs(data, a.old)
+    serials = {d: (dev.get("cert") or {}).get("serial") for d, dev in certs}
+    n = sum(_revoke_cert(dev, today, f"hardware key {a.old} replaced by {a.new}")
+            for _, dev in certs)
+    msgs.append(f"retired hardware key {a.old} (replaced by {a.new}); revoked {n} device cert(s)")
+    lines = [(f"register {a.new} as a FIDO2 key in Vaultwarden and Authentik, then remove "
+             f"{a.old} from both"),
+             f"wipe {a.old}: `ykman fido reset` and `ykman piv reset` (destroys its keys)"]
+    lines += [f"{_revoke_cmd(serials[d], 'superseded')}; then "
+              f"`cvc-access device transfer {d} --to-hardware-key {a.new}`" for d, _ in certs]
+    return "\n".join([*msgs, *_oob(lines)])
+
+
+def person_set_tier(data: dict, a: argparse.Namespace, today: dt.date) -> str:
+    person = (data.get("people") or {}).get(a.id)
+    if not isinstance(person, dict):
+        raise EditError(f"unknown person {a.id!r}")
+    before = active_owner_keys(data)
+    old = person.get("tier")
+    person["tier"] = a.tier
+    _guard_owner_keys(before, data, f"demoting {a.id} from {old} to {a.tier}")
+    return f"set tier of {a.id}: {old} -> {a.tier}"
 
 
 def device_add(data: dict, a: argparse.Namespace, today: dt.date) -> str:
@@ -167,6 +316,7 @@ def person_remove(data: dict, a: argparse.Namespace, today: dt.date) -> str:
     people = data.get("people") or {}
     if pid not in people:
         raise EditError(f"unknown person {pid!r}")
+    before = active_owner_keys(data)
     del people[pid]
     devs = data.get("devices") or {}
     keys = data.get("hardware_keys") or {}
@@ -180,6 +330,7 @@ def person_remove(data: dict, a: argparse.Namespace, today: dt.date) -> str:
         del keys[k]
     for g in gone_agents:
         del agents[g]
+    _guard_owner_keys(before, data, f"person remove {pid}")
     flagged = []
     for section in ("people", "agents"):
         for oid, raw in (data.get(section) or {}).items():
@@ -214,6 +365,7 @@ def person_remove(data: dict, a: argparse.Namespace, today: dt.date) -> str:
 def device_lost(data: dict, a: argparse.Namespace, today: dt.date) -> str:
     """Mark a device lost and revoke its cert in the registry. Never contacts step-ca."""
     dev = _device(data, a.id)
+    before = active_owner_keys(data)
     if dev.get("status") == "lost":
         raise EditError(f"device {a.id!r} is already marked lost")
     cert = dev.get("cert") or {}
@@ -232,6 +384,7 @@ def device_lost(data: dict, a: argparse.Namespace, today: dt.date) -> str:
                  "the PIV PIN/PUK before re-issuing"),
                 f"  [ ] if {hk} is lost, remove its FIDO2 passkeys from Authentik/Vaultwarden"]
     out.append(f"  [ ] remove {a.id} from the Tailscale tailnet")
+    _guard_owner_keys(before, data, f"device lost {a.id}")
     return "\n".join(out)
 
 
@@ -252,6 +405,26 @@ def add_parsers(sub: argparse._SubParsersAction, reg_kw: dict) -> None:
     r.add_argument("id")
     r.add_argument("--reason", required=True, choices=("lost", "retired", "revoked"))
     r.set_defaults(edit=hwkey_revoke)
+    su = hws.add_parser("suspend", help="lock a key out (reversible; refused for the last "
+                                        "active owner key)")
+    su.add_argument("id")
+    su.add_argument("--reason")
+    su.set_defaults(edit=hwkey_suspend)
+    rs = hws.add_parser("resume", help="re-activate a suspended key")
+    rs.add_argument("id")
+    rs.set_defaults(edit=hwkey_resume)
+    tr = hws.add_parser("transfer", help="give a key to another owner-tier person")
+    tr.add_argument("id")
+    tr.add_argument("--to", required=True, help="person id (must be tier owner)")
+    tr.set_defaults(edit=hwkey_transfer)
+    rp = hws.add_parser("replace", help="retire OLD once NEW is active (enrolls NEW if "
+                                        "--serial/--model are given)")
+    rp.add_argument("old")
+    rp.add_argument("--new", required=True)
+    rp.add_argument("--serial")
+    rp.add_argument("--model")
+    rp.add_argument("--location", choices=HWKEY_LOCATIONS)
+    rp.set_defaults(edit=hwkey_replace)
 
     dv = sub.add_parser("device", help="manage human devices and their certs (D13)")
     dvs = dv.add_subparsers(dest="action", required=True)
@@ -288,9 +461,13 @@ def add_parsers(sub: argparse._SubParsersAction, reg_kw: dict) -> None:
     pr = pes.add_parser("remove", help="remove a person, their devices, keys and assistants")
     pr.add_argument("id")
     pr.set_defaults(edit=person_remove)
-    for p in (e, r, a, s, v, t, lo, pr):
+    st = pes.add_parser("set-tier", help="change a person's tier")
+    st.add_argument("id")
+    st.add_argument("--tier", required=True, choices=PERSON_TIERS)
+    st.set_defaults(edit=person_set_tier)
+    for p in (e, r, a, s, v, t, lo, pr, su, rs, tr, rp, st):
         p.add_argument("--registry", **reg_kw)
-    for p in (lo, pr):
+    for p in (lo, pr, r, su, rs, tr, rp, st):
         p.add_argument("--dry-run", action="store_true", help="show the diff; write nothing")
 
 
@@ -298,7 +475,11 @@ def run_edit(args: argparse.Namespace, today: dt.date | None = None) -> int:
     path = Path(args.registry)
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        before = active_owner_keys(data)
         msg = args.edit(data, args, today or dt.datetime.now().astimezone().date())
+        # Backstop for every edit, including ones added later (D14).
+        _guard_owner_keys(before, data, f"{getattr(args, 'cmd', '')} "
+                                        f"{getattr(args, 'action', '')}".strip() or "this edit")
         parse_registry(data)
     except RegistryError as e:
         for err in e.errors:
