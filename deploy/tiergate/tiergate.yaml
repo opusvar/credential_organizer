@@ -1,0 +1,67 @@
+# cvc-tiergate — EXAMPLE manifests, NOT applied. Review before `kubectl apply -f`.
+# Image must be imported into k3s containerd: `sudo k3s ctr images import cvc-tiergate.tar`.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cvc-tiergate-config
+  namespace: cvc
+data:
+  config.yaml: |
+    # Minimum tier per host. Order:
+    # guest-short < guest-long < media-only < low < medium < high < admin < owner
+    # Hosts with min tier high/admin/owner also require Authentik forwardAuth
+    # (X-authentik-username) as passkey proof.
+    # Hosts not listed are denied unless default_min_tier is set.
+    hosts:
+      books.example.home: media-only
+      ha.example.home: medium
+      vault.example.home: high
+      portainer.example.home: admin
+    # default_min_tier: low
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cvc-tiergate
+  namespace: cvc
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: cvc-tiergate}
+  template:
+    metadata:
+      labels: {app: cvc-tiergate}
+    spec:
+      containers:
+        - name: tiergate
+          image: cvc-tiergate:local
+          imagePullPolicy: Never
+          command: ["cvc-tiergate"]
+          env:
+            - {name: CVC_TIERGATE_CONFIG, value: /etc/cvc-tiergate/config.yaml}
+            - {name: CVC_TIERGATE_PORT, value: "8720"}
+          ports:
+            - {containerPort: 8720, name: http}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: config, mountPath: /etc/cvc-tiergate, readOnly: true}
+      volumes:
+        - name: config
+          configMap: {name: cvc-tiergate-config}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cvc-tiergate
+  namespace: cvc
+spec:
+  selector: {app: cvc-tiergate}
+  ports:
+    - {port: 8720, targetPort: http, name: http}

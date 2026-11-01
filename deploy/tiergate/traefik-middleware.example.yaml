@@ -1,0 +1,65 @@
+# Traefik v3 example wiring for cvc-tiergate — NOT applied.
+#
+# Chain order on a route: cvc-client-cert -> [authentik forwardAuth for high+ hosts] -> cvc-tiergate.
+# Authentik's outpost middleware must run BEFORE tiergate so X-authentik-username is present
+# on the request tiergate inspects.
+#
+# SECURITY: strip client-supplied X-Forwarded-Tls-Client-Cert / X-authentik-* headers at the
+# entrypoint; passTLSClientCert overwrites the cert header, but verify your authentik
+# middleware overwrites X-authentik-username rather than passing a spoofed one through.
+apiVersion: traefik.io/v1alpha1
+kind: TLSOption
+metadata:
+  name: cvc-mtls
+  namespace: cvc
+spec:
+  clientAuth:
+    secretNames: [cvc-step-ca-root]   # Secret with key tls.ca = step-ca root PEM
+    clientAuthType: RequireAndVerifyClientCert
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: cvc-client-cert
+  namespace: cvc
+spec:
+  passTLSClientCert:
+    pem: true   # sends X-Forwarded-Tls-Client-Cert (URL-escaped PEM body)
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: cvc-tiergate
+  namespace: cvc
+spec:
+  forwardAuth:
+    address: http://cvc-tiergate.cvc.svc.cluster.local:8720/auth
+    trustForwardHeader: true
+    authResponseHeaders:
+      - X-Cvc-Person
+      - X-Cvc-Tier
+      - X-Cvc-Device
+---
+# Example route for a high-tier host.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: vault-example
+  namespace: cvc
+spec:
+  entryPoints: [websecure]
+  routes:
+    - match: Host(`vault.example.home`)
+      kind: Rule
+      middlewares:
+        - name: cvc-client-cert
+        - name: authentik            # existing Authentik outpost forwardAuth middleware
+          namespace: auth
+        - name: cvc-tiergate
+      services:
+        - name: vaultwarden
+          namespace: auth
+          port: 80
+  tls:
+    options:
+      name: cvc-mtls

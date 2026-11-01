@@ -11,7 +11,7 @@ from cvc.access.model import Registry
 
 @register_builder("broker-acl")
 def build_broker_acl(registry: Registry, today: dt.date | None = None) -> str:
-    today = today or dt.date.today()
+    today = today or dt.datetime.now().astimezone().date()
     agents: dict = {}
     for aid in sorted(registry.agents):
         agent = registry.agents[aid]
