@@ -150,10 +150,15 @@ def _bearer(authorization: str) -> str:
     return authorization.removeprefix("Bearer ").strip()
 
 
-def _authn(acl: Acl, sessions: SessionStore, agent: str, token: str
-           ) -> tuple[bool, SessionToken | None]:
-    """Accept either the long-lived service token or an unexpired session token."""
+def _authn(acl: Acl, sessions: SessionStore, agent: str, token: str,
+           enforce_session: bool = False) -> tuple[bool, SessionToken | None]:
+    """Accept either the long-lived service token or an unexpired session token.
+
+    With ``enforce_session`` and the agent opted in (acl.requires_session_token), the
+    service token is rejected — it may then only be used to mint session tokens."""
     if acl.authenticate(agent, token):
+        if enforce_session and acl.requires_session_token(agent):
+            return False, None
         return True, None
     rec = sessions.resolve(agent, token)
     return (rec is not None), rec
@@ -408,7 +413,7 @@ def fetch_credential(
         raise HTTPException(status_code=status, detail=reason)
 
     # 1. Authenticate (service token or short-lived session token).
-    ok, session = _authn(acl, sessions, x_agent_id, token)
+    ok, session = _authn(acl, sessions, x_agent_id, token, enforce_session=True)
     if not ok:
         _deny(401, "authentication failed", "deny:auth")
     if session is not None and req.credential.lower() not in session.scope:
@@ -485,7 +490,7 @@ def trigger_backup(
     obo = _obo(acl, x_agent_id)
 
     # 1. Authenticate.
-    ok, session = _authn(acl, sessions, x_agent_id, token)
+    ok, session = _authn(acl, sessions, x_agent_id, token, enforce_session=True)
     if ok and session is not None and _BACKUP_CAPABILITY not in session.scope:
         ok = False
     if not ok:
