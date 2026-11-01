@@ -186,7 +186,11 @@ def _sync_approval(store: ApprovalStore, svc: ApprovalService, approval_id: str 
 _TRUST_TIERGATE_ENV = "CVC_TRUST_TIERGATE"
 # Browser origin of the personal dashboard allowed to call the human-facing endpoints.
 _DASHBOARD_ORIGIN_ENV = "CVC_DASHBOARD_ORIGIN"
-_HUMAN_PATHS = re.compile(r"^/v1/(whoami|approvals/nonce|approvals/[^/]+/decide)$")
+_HUMAN_PATHS = re.compile(
+    r"^/v1/(whoami|approvals/nonce|approvals/[^/]+/(decide|request))$")
+# Networks /v1/whoami may be reached from (client IP via tier-gate/Traefik headers).
+_TAILNET_CIDRS_ENV = "CVC_TAILNET_CIDRS"
+_DEFAULT_TAILNET_CIDRS = "100.64.0.0/10"
 _NONCE_TTL = 300.0
 
 
@@ -222,8 +226,43 @@ def _nonces() -> _NonceStore:
     return _NONCES
 
 
+def _tiergate_trusted() -> bool:
+    return os.environ.get(_TRUST_TIERGATE_ENV, "").strip().lower() in ("1", "true", "yes")
+
+
+def _require_tailnet_client(x_real_ip: str | None, x_forwarded_for: str | None) -> str:
+    """Client IP (X-Real-Ip, else first X-Forwarded-For hop — set by Traefik and trusted only
+    behind tier-gate) must fall inside CVC_TAILNET_CIDRS (default 100.64.0.0/10)."""
+    import ipaddress
+    if not _tiergate_trusted():
+        raise HTTPException(status_code=403,
+                            detail="tier-gate identity not trusted on this deployment")
+    raw = (x_real_ip or (x_forwarded_for or "").split(",")[0]).strip()
+    try:
+        ip = ipaddress.ip_address(raw)
+        nets = [ipaddress.ip_network(c.strip(), strict=False) for c in
+                os.environ.get(_TAILNET_CIDRS_ENV, _DEFAULT_TAILNET_CIDRS).split(",")
+                if c.strip()]
+    except ValueError:
+        raise HTTPException(status_code=403, detail="client address unknown") from None
+    if not any(ip in n for n in nets):
+        raise HTTPException(status_code=403, detail="only reachable on the tailnet")
+    return raw
+
+
+def _parse_if_match(if_match: str | None, approval_id: str) -> int:
+    """If-Match: "<id>.v<version>" -> version. Missing -> 428, foreign/garbled -> 412."""
+    if not if_match:
+        raise HTTPException(status_code=428, detail="If-Match (approval ETag) required")
+    tag = if_match.strip().removeprefix("W/").strip('"')
+    ident, _, ver = tag.rpartition(".v")
+    if ident != approval_id or not ver.isdigit():
+        raise HTTPException(status_code=412, detail="If-Match does not match this approval")
+    return int(ver)
+
+
 def _tiergate_identity(person: str | None, tier: str | None) -> tuple[str, str]:
-    if os.environ.get(_TRUST_TIERGATE_ENV, "").strip().lower() not in ("1", "true", "yes"):
+    if not _tiergate_trusted():
         raise HTTPException(status_code=403,
                             detail="tier-gate identity not trusted on this deployment")
     if not person or not tier:
@@ -810,15 +849,37 @@ def get_approval(
     acl: Acl = Depends(_acl),  # noqa: B008
     sessions: SessionStore = Depends(_sessions),  # noqa: B008
     approvals: ApprovalStore = Depends(_approvals),  # noqa: B008
-) -> dict:
+) -> JSONResponse:
     token = _bearer(authorization)
     if not _authn(acl, sessions, x_agent_id, token)[0]:
         raise HTTPException(status_code=401, detail="authentication failed")
-    _sync_approval(approvals, _approval_service(), approval_id)
+    svc = _approval_service()
+    _sync_approval(approvals, svc, approval_id)
     a = approvals.get(approval_id)
     if a is None or a.agent != x_agent_id:
         raise HTTPException(status_code=404, detail="no such approval")
-    return {"id": a.id, "status": a.status, "credential": a.credential, "purpose": a.purpose}
+    body = {"id": a.id, "status": a.status, "credential": a.credential, "purpose": a.purpose}
+    r = svc.get(approval_id)
+    headers = {}
+    if r is not None:
+        body["version"] = r.version
+        headers["ETag"] = r.etag
+    return JSONResponse(content=body, headers=headers)
+
+
+@app.get("/v1/approvals/{approval_id}/request", tags=["approvals"],
+         summary="Full cvc.approval.v1 record for a human approver (with ETag)")
+def get_approval_request(
+    approval_id: str,
+    x_cvc_person: str | None = Header(None, max_length=64),
+    x_cvc_tier: str | None = Header(None, max_length=32),
+    svc: ApprovalService = Depends(_approval_service),  # noqa: B008
+) -> JSONResponse:
+    _tiergate_identity(x_cvc_person, x_cvc_tier)
+    r = svc.get(approval_id)
+    if r is None:
+        raise HTTPException(status_code=404, detail="no such approval")
+    return JSONResponse(content=r.to_dict(), headers={"ETag": r.etag})
 
 
 @app.post("/v1/approvals/{approval_id}/approve", tags=["credentials"],
@@ -850,7 +911,10 @@ def whoami(
     x_cvc_person: str | None = Header(None, max_length=64),
     x_cvc_tier: str | None = Header(None, max_length=32),
     x_authentik_username: str | None = Header(None, max_length=128),
+    x_real_ip: str | None = Header(None, max_length=64),
+    x_forwarded_for: str | None = Header(None, max_length=512),
 ) -> dict:
+    _require_tailnet_client(x_real_ip, x_forwarded_for)
     person, tier = _tiergate_identity(x_cvc_person, x_cvc_tier)
     return {"person": person, "tier": tier,
             "passkey": bool(x_authentik_username) and x_authentik_username == person}
@@ -868,13 +932,15 @@ def decide(
     approvals: ApprovalStore = Depends(_approvals),  # noqa: B008
     svc: ApprovalService = Depends(_approval_service),  # noqa: B008
     nonces: _NonceStore = Depends(_nonces),  # noqa: B008
-) -> dict:
+    if_match: str | None = Header(None, max_length=128),
+) -> JSONResponse:
     person, tier = _tiergate_identity(x_cvc_person, x_cvc_tier)
+    version = _parse_if_match(if_match, approval_id)
     if not nonces.consume(body.nonce, person):
         raise HTTPException(status_code=403, detail="invalid or reused nonce")
     try:
         r = svc.decide(approval_id, body.decision, person=person, tier=tier,
-                       passkey_user=x_authentik_username)
+                       passkey_user=x_authentik_username, expected_version=version)
     except DecideError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
     _sync_approval(approvals, svc, approval_id)
@@ -883,8 +949,9 @@ def decide(
                             purpose=a.purpose if a else "-",
                             outcome=f"approval:{r.status}:{r.id}:by:{person}",
                             on_behalf_of=r.requester.on_behalf_of))
-    return {"id": r.id, "status": r.status, "decided_by": r.decided_by,
-            "decided_at": r.decided_at}
+    return JSONResponse(content={"id": r.id, "status": r.status, "decided_by": r.decided_by,
+                                 "decided_at": r.decided_at, "version": r.version},
+                        headers={"ETag": r.etag})
 
 
 def main() -> None:

@@ -118,7 +118,12 @@ class ApprovalRequest:
     decided_by: str | None = None
     decided_at: str | None = None
     on_timeout: str = "deny"
+    version: int = 1                # bumped on every state change (HTTP ETag / If-Match)
     schema: str = SCHEMA
+
+    @property
+    def etag(self) -> str:
+        return f'"{self.id}.v{self.version}"'
 
     @property
     def is_terminal(self) -> bool:
@@ -185,7 +190,7 @@ def scan_secrets(node: Any, path: str = "") -> list[str]:
 
 _REQUIRED_STR = ("id", "created_at", "deadline", "intent", "summary", "if_approved",
                  "if_denied")
-_OPTIONAL = {"details_url", "decided_by", "decided_at"}
+_OPTIONAL = {"details_url", "decided_by", "decided_at", "version"}
 _KEYS = {"schema", "id", "created_at", "deadline", "urgency", "requester", "intent", "summary",
          "labels", "risk", "if_approved", "if_denied", "on_timeout", "approver_min_tier",
          "requires_passkey", "status"} | _OPTIONAL
@@ -215,6 +220,9 @@ def validate(d: Any) -> list[str]:
             errs.append(f"{k}: must be one of {list(allowed)}")
     if d["on_timeout"] != "deny":
         errs.append("on_timeout: must be 'deny'")
+    if "version" in d and (not isinstance(d["version"], int) or isinstance(d["version"], bool)
+                           or d["version"] < 1):
+        errs.append("version: must be a positive integer")
     if not isinstance(d["requires_passkey"], bool):
         errs.append("requires_passkey: must be a boolean")
     r = d["requester"]

@@ -131,9 +131,8 @@ def test_resolved_updated_then_cleared_after_24h():
     assert json.loads(pub.last(f"cvc/approvals/{r.id}"))["status"] == "denied"
     clock.t += timedelta(hours=25)
     svc.sweep()
-    assert pub.msgs[-2] == (f"cvc/approvals/{r.id}", "", True) or \
-        (f"cvc/approvals/{r.id}", "", True) in pub.msgs
-    assert svc.get(r.id) is None
+    assert (f"cvc/approvals/{r.id}", "", True) in pub.msgs
+    assert svc.get(r.id).status == "denied"     # retained cleared; record kept as history
 
 
 # -- decide rules -------------------------------------------------------------------
@@ -205,3 +204,33 @@ def test_state_file_shared_and_cli(tmp_path, capsys, monkeypatch):
                      "--passkey-verified"]) == 0
     assert svc.get(r.id).status == "approved"
     assert cli.main(["--state", str(state), "show", r.id]) == 0
+
+
+def test_version_bumps_and_expected_version():
+    svc = ApprovalService(publisher=FakePublisher())
+    r = svc.submit(_req())
+    assert r.version == 1 and r.etag == f'"{r.id}.v1"'
+    with pytest.raises(DecideError) as e:
+        svc.decide(r.id, "approve", person="nat", tier="owner", expected_version=3)
+    assert e.value.status_code == 412
+    assert svc.decide(r.id, "approve", person="nat", tier="owner",
+                      expected_version=1).version == 2
+
+
+def test_history_kept_90_days(tmp_path):
+    pub, clock = FakePublisher(), Clock()
+    state = tmp_path / "s.json"
+    svc = ApprovalService(publisher=pub, clock=clock, state_path=str(state))
+    r = svc.submit(_req(clock))
+    svc.decide(r.id, "deny", person="nat", tier="owner")
+    clock.t += timedelta(days=2)
+    svc.sweep()
+    svc.sweep()
+    clears = [m for m in pub.msgs if m == (f"cvc/approvals/{r.id}", "", True)]
+    assert len(clears) == 1                      # cleared once from MQTT
+    assert svc.get(r.id).status == "denied"      # still in history
+    assert r.id in json.loads(state.read_text())["cleared"]
+    clock.t += timedelta(days=89)
+    svc.sweep()
+    assert svc.get(r.id) is None
+    assert ApprovalService(history_days=1).history == timedelta(days=1)

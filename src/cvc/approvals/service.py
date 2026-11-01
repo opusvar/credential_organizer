@@ -12,7 +12,11 @@ Decide rules (D18):
 
 State is in memory, optionally mirrored to a JSON file (`state_path`) so the owner CLI and
 the broker see the same requests. Resolved requests stay retained (updated) on MQTT for 24h,
-then their retained message is cleared and the record dropped.
+then their retained message is cleared; the record itself stays in the state file as
+history for `history_days` (default 90, env CVC_APPROVALS_HISTORY_DAYS) and is then dropped.
+
+Every state change bumps `version`; callers may pass `expected_version` (HTTP If-Match)
+so a decision is only applied to the exact record the human looked at (else 412).
 """
 from __future__ import annotations
 
@@ -27,7 +31,8 @@ from pathlib import Path
 from .model import PERSON_RANK, ApprovalRequest, iso, now_utc, parse_ts
 from .publisher import SUMMARY_TOPIC, NullPublisher, Publisher, discovery_config, request_topic
 
-RETAIN_RESOLVED = timedelta(hours=24)
+RETAIN_RESOLVED = timedelta(hours=24)       # retained MQTT message lifetime after resolve
+DEFAULT_HISTORY_DAYS = 90                   # resolved records kept in the state file
 DECISIONS = {"approve": "approved", "deny": "denied"}
 
 
@@ -56,7 +61,13 @@ def check_authority(req: ApprovalRequest, person: str | None, tier: str | None,
 
 class ApprovalService:
     def __init__(self, publisher: Publisher | None = None, state_path: str | None = None,
-                 clock: Callable[[], datetime] = now_utc, discovery_prefix: str = "homeassistant"):
+                 clock: Callable[[], datetime] = now_utc, discovery_prefix: str = "homeassistant",
+                 history_days: int | None = None):
+        if history_days is None:
+            history_days = int(os.environ.get("CVC_APPROVALS_HISTORY_DAYS",
+                                              DEFAULT_HISTORY_DAYS))
+        self.history = timedelta(days=history_days)
+        self._cleared: set[str] = set()
         self.publisher = publisher or NullPublisher()
         self.state_path = Path(state_path) if state_path else None
         self.clock = clock
@@ -70,7 +81,9 @@ class ApprovalService:
     def _load(self) -> None:
         if self.state_path and self.state_path.exists():
             raw = json.loads(self.state_path.read_text(encoding="utf-8") or "{}")
-            self._items = {k: ApprovalRequest.from_dict(v) for k, v in raw.items()}
+            items = raw.get("approvals", {}) if "approvals" in raw else raw
+            self._items = {k: ApprovalRequest.from_dict(v) for k, v in items.items()}
+            self._cleared = set(raw.get("cleared", [])) & set(self._items)
 
     def _save(self) -> None:
         if not self.state_path:
@@ -78,7 +91,8 @@ class ApprovalService:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=self.state_path.parent, prefix=".approvals.")
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump({k: v.to_dict() for k, v in self._items.items()}, fh, indent=1)
+            json.dump({"approvals": {k: v.to_dict() for k, v in self._items.items()},
+                       "cleared": sorted(self._cleared & set(self._items))}, fh, indent=1)
         os.chmod(tmp, 0o600)
         os.replace(tmp, self.state_path)
 
@@ -110,6 +124,13 @@ class ApprovalService:
             self._publish_summary()
         return req
 
+    def _transition(self, req: ApprovalRequest, status: str, by: str | None) -> None:
+        req.status, req.decided_by, req.decided_at = status, by, iso(self.clock())
+        req.version += 1
+        self._save()
+        self._publish_one(req)
+        self._publish_summary()
+
     def get(self, approval_id: str) -> ApprovalRequest | None:
         self.sweep()
         with self._lock:
@@ -122,7 +143,8 @@ class ApprovalService:
         return [r for r in items if status is None or r.status == status]
 
     def decide(self, approval_id: str, decision: str, *, person: str | None,
-               tier: str | None, passkey_user: str | None = None) -> ApprovalRequest:
+               tier: str | None, passkey_user: str | None = None,
+               expected_version: int | None = None) -> ApprovalRequest:
         if decision not in DECISIONS:
             raise DecideError(422, "decision must be approve or deny")
         target = DECISIONS[decision]
@@ -137,10 +159,9 @@ class ApprovalService:
                 if req.status == target and req.decided_by == person:
                     return req                      # idempotent repeat
                 raise DecideError(409, f"approval already {req.status}")
-            req.status, req.decided_by, req.decided_at = target, person, iso(self.clock())
-            self._save()
-            self._publish_one(req)
-            self._publish_summary()
+            if expected_version is not None and expected_version != req.version:
+                raise DecideError(412, "approval changed since it was fetched (ETag mismatch)")
+            self._transition(req, target, person)
         self._notify(req)
         return req
 
@@ -152,10 +173,7 @@ class ApprovalService:
             req = self._items.get(approval_id)
             if req is None or req.is_terminal:
                 return req
-            req.status, req.decided_by, req.decided_at = status, by, iso(self.clock())
-            self._save()
-            self._publish_one(req)
-            self._publish_summary()
+            self._transition(req, status, by)
         return req
 
     def cancel(self, approval_id: str, by: str) -> ApprovalRequest | None:
@@ -164,10 +182,7 @@ class ApprovalService:
             req = self._items.get(approval_id)
             if req is None or req.is_terminal:
                 return req
-            req.status, req.decided_by, req.decided_at = "cancelled", by, iso(self.clock())
-            self._save()
-            self._publish_one(req)
-            self._publish_summary()
+            self._transition(req, "cancelled", by)
         self._notify(req)
         return req
 
@@ -181,14 +196,20 @@ class ApprovalService:
             for req in list(self._items.values()):
                 if req.status == "pending" and parse_ts(req.deadline) <= now:
                     req.status, req.decided_at = "expired", iso(now)
+                    req.version += 1
                     expired.append(req)
                     self._publish_one(req)
                     changed = True
-                elif (req.is_terminal and req.decided_at
-                      and now - parse_ts(req.decided_at) >= RETAIN_RESOLVED):
-                    self.publisher.publish(request_topic(req.id), "", retain=True)
-                    del self._items[req.id]
-                    changed = True
+                elif req.is_terminal and req.decided_at:
+                    age = now - parse_ts(req.decided_at)
+                    if age >= self.history:
+                        del self._items[req.id]
+                        self._cleared.discard(req.id)
+                        changed = True
+                    elif age >= RETAIN_RESOLVED and req.id not in self._cleared:
+                        self.publisher.publish(request_topic(req.id), "", retain=True)
+                        self._cleared.add(req.id)
+                        changed = True
             if changed:
                 self._save()
                 self._publish_summary()

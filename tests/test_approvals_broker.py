@@ -64,17 +64,25 @@ def _create(client, agent="hi", tok="t-hi", **body):
 
 
 def _id(person, tier, passkey=None):
-    h = {"X-Cvc-Person": person, "X-Cvc-Tier": tier}
+    h = {"X-Cvc-Person": person, "X-Cvc-Tier": tier, "X-Real-Ip": "100.101.102.103"}
     if passkey:
         h["X-authentik-username"] = passkey
     return h
 
 
-def _decide(client, aid, decision, hdrs, nonce=None):
+def _etag(client, aid, hdrs):
+    r = client.get(f"/v1/approvals/{aid}/request", headers=hdrs)
+    return r.headers.get("etag")
+
+
+def _decide(client, aid, decision, hdrs, nonce=None, etag=None):
     if nonce is None:
         nonce = client.get("/v1/approvals/nonce", headers=hdrs).json()["nonce"]
+    if etag is None:
+        etag = _etag(client, aid, hdrs)
     return client.post(f"/v1/approvals/{aid}/decide",
-                       json={"decision": decision, "nonce": nonce}, headers=hdrs)
+                       json={"decision": decision, "nonce": nonce},
+                       headers={**hdrs, "If-Match": etag or ""})
 
 
 def _fetch(client, aid):
@@ -184,3 +192,36 @@ def test_legacy_approver_token_still_works(env):
     assert r.status_code == 200
     assert svc.get(aid).status == "approved"
     assert _fetch(client, aid).status_code == 200
+
+
+def test_etag_required_and_checked(env):
+    client, _svc, pub = env
+    aid = _create(client)["id"]
+    owner = _id("nat", "owner", "nat")
+    r = client.get(f"/v1/approvals/{aid}/request", headers=owner)
+    assert r.headers["etag"] == f'"{aid}.v1"' and r.json()["version"] == 1
+    agent = client.get(f"/v1/approvals/{aid}",
+                       headers={"X-Agent-Id": "hi", "Authorization": "Bearer t-hi"})
+    assert agent.headers["etag"] == f'"{aid}.v1"'
+    n = client.get("/v1/approvals/nonce", headers=owner).json()["nonce"]
+    missing = client.post(f"/v1/approvals/{aid}/decide",
+                          json={"decision": "deny", "nonce": n}, headers=owner)
+    assert missing.status_code == 428
+    assert _decide(client, aid, "deny", owner, etag=f'"{aid}.v7"').status_code == 412
+    assert _decide(client, aid, "deny", owner, etag='"other.v1"').status_code == 412
+    ok = _decide(client, aid, "deny", owner, etag=f'"{aid}.v1"')
+    assert ok.status_code == 200 and ok.headers["etag"] == f'"{aid}.v2"'
+    last = [p for t, p, _ in pub.msgs if t == f"cvc/approvals/{aid}"][-1]
+    assert json.loads(last)["version"] == 2
+
+
+def test_whoami_tailnet_only(env, monkeypatch):
+    client, _, _ = env
+    h = _id("nat", "owner")
+    assert client.get("/v1/whoami", headers={**h, "X-Real-Ip": "192.168.1.50"}).status_code == 403
+    no_ip = {k: v for k, v in h.items() if k != "X-Real-Ip"}
+    assert client.get("/v1/whoami", headers=no_ip).status_code == 403
+    xff = {**no_ip, "X-Forwarded-For": "100.64.0.9, 10.42.0.1"}
+    assert client.get("/v1/whoami", headers=xff).status_code == 200
+    monkeypatch.setenv("CVC_TAILNET_CIDRS", "10.0.0.0/8")
+    assert client.get("/v1/whoami", headers=h).status_code == 403
