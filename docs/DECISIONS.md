@@ -287,3 +287,45 @@ Timeline from initiation:
 
 State lives in `~/.local/state/cvc/takeover/`: `takeovers.json` plus an append-only,
 hash-chained `history.jsonl` (`cvc takeover verify-history`).
+
+**D15 addendum: misuse protections and initiator UX** (approved by Nathan 2026-11-01):
+- **Alerts.** The target is alerted on every channel through `MultiNotifier`
+  (`CVC_TAKEOVER_WEBHOOKS`: email relay, push, Home Assistant).
+  - Key path: days 0/7/14/85.
+  - Recovery path: those days, then every 30 days until completion, plus day 170.
+  - On start, every other active owner is notified too.
+- **Veto.** The target, or any other active owner, can cancel with their own YubiKey. The
+  initiator cannot. `vetoed_by` is recorded, and the history event is `cancelled` (target) or
+  `vetoed` (another owner).
+- **No counter-takeovers.**
+  - Someone who is the target of an active takeover cannot start one.
+  - A person can be the target of at most one active takeover; the first one started wins.
+- **Voiding.** If the initiator is removed, taken over or demoted below owner, the takeover is
+  voided automatically on the next `tick`, `view`, `cancel`, `reconcile` or `complete`. The
+  Vaultwarden requests are rejected, and a different owner must restart.
+- **Suspended keys.** A suspended target key is accepted at step 5, because suspension is a
+  lockout, not a recovery block. Lost or revoked keys are still refused. The record notes
+  whether the target's primary key (one holding a device cert) or a backup key was used:
+  `factor` is key, backup-key or recovery-password.
+- **Reconcile.** The cvc record is the source of truth. `cvc takeover reconcile <id>`
+  re-initiates Vaultwarden requests that are missing or were reset, and adopts a re-created
+  grant that matches. The original `initiated_at` and deadline are kept. If Vaultwarden's own
+  timer restarted, completion is still gated on the cvc deadline, and the Vaultwarden takeover
+  call may also wait for Vaultwarden's own timer.
+- **Backup.** `~/.local/state/cvc/takeover/` (`takeovers.json`, `history.jsonl`,
+  `recovery.json`) **must be included in the identity backup**. That is
+  `opi_base_config/scripts/backup-identity.sh`, in another repo; add the path there.
+- **Wizard.** Before confirming, the wizard prints:
+  - the target's name, factor and path
+  - the view and completion days, with real dates
+  - who is notified
+  - the veto rule
+  - what completion does
+  The initiator must type the target's display name (`people.<id>.name`, or the id if there is
+  no name). The FAQ ships as `cvc/takeover/faq.md`; it is printed at wizard start, by
+  `cvc takeover faq`, and at `GET /v1/takeover/faq`.
+- **Initiator status.** `GET /v1/takeover/status?initiator=<id>` and
+  `cvc takeover status --initiator <id>` return an `icon` (`hourglass`, or `check` when
+  eligible) and the text "You are taking over <Target Name>'s account. <N> days left" (or
+  "Ready to complete"), plus the FAQ link. Like the banner, the API is unauthenticated and must
+  sit behind the tier gate.

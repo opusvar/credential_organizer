@@ -21,14 +21,15 @@ import os
 import secrets
 from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, field, fields
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 VIEW_WAIT_DAYS = 15
 TAKEOVER_WAIT_DAYS = 90             # path "key": target's (primary or backup) YubiKey presented
 RECOVERY_TAKEOVER_WAIT_DAYS = 180   # path "recovery-password": no target key, sealed password
 NOTIFY_DAYS = (0, 7, 14, 85)
-RECOVERY_NOTIFY_DAYS = (0, 7, 14, 85, 170)
+# Recovery path: same early alerts, then every 30 days until completion, plus day 170.
+RECOVERY_NOTIFY_DAYS = tuple(sorted({0, 7, 14, 85, 170, *range(30, 180, 30)}))
 PATHS = ("key", "recovery-password")
 
 
@@ -69,7 +70,12 @@ class TakeoverRecord:
     vw_view_grant: str
     vw_takeover_grant: str
     path: str = "key"                    # PATHS
-    status: str = "pending"              # pending | cancelled | completed
+    factor: str = "key"                  # key | backup-key | recovery-password
+    target_name: str = ""
+    status: str = "pending"              # pending | cancelled | completed | voided
+    vetoed_by: str | None = None         # who cancelled (target or another owner)
+    voided_reason: str | None = None
+    reconciled: list[str] = field(default_factory=list)   # ISO times VW was re-initiated              # pending | cancelled | completed
     notified: list[int] = field(default_factory=list)
     cancelled_at: str | None = None
     completed_at: str | None = None
@@ -85,6 +91,14 @@ class TakeoverRecord:
     @property
     def wait_days(self) -> int:
         return takeover_wait_days(self.path)
+
+    @property
+    def deadline(self) -> datetime:
+        """Earliest completion, from the ORIGINAL initiation (never restarts)."""
+        return self.started + timedelta(days=self.wait_days)
+
+    def days_left(self, now: datetime) -> int:
+        return max(0, self.wait_days - self.day(now))
 
     def phase(self, now: datetime) -> str:
         if self.status != "pending":
@@ -138,10 +152,9 @@ class TakeoverStore:
             raise TakeoverError(f"unknown takeover {tid!r}")
         return rec
 
-    def open_for(self, person: str) -> list[TakeoverRecord]:
-        """Pending takeovers where ``person`` is initiator or target."""
-        return [r for r in self._read().values()
-                if r.status == "pending" and person in (r.initiator, r.target)]
+    def pending_against(self, person: str) -> list[TakeoverRecord]:
+        """Pending takeovers whose target is ``person``."""
+        return [r for r in self._read().values() if r.status == "pending" and r.target == person]
 
     def _last_hash(self) -> str:
         last = GENESIS

@@ -169,8 +169,10 @@ class YkmanReader:
         return KeyReading(s, ok)
 
 
-def verify_owner_key(reading: KeyReading, data: dict, person: str) -> str:
-    """Return the hardware key id if the reading is an active owner key registered to person."""
+def verify_owner_key(reading: KeyReading, data: dict, person: str,
+                     allow_suspended: bool = False) -> str:
+    """Return the hardware key id if the reading is an active owner key registered to person.
+    ``allow_suspended``: a suspended key (D14 lockout) is accepted too; lost/revoked never."""
     if not reading.attested:
         raise TakeoverError(f"refused: YubiKey {reading.serial} failed PIV slot 9a attestation")
     match = [(kid, k) for kid, k in (data.get("hardware_keys") or {}).items()
@@ -181,7 +183,8 @@ def verify_owner_key(reading: KeyReading, data: dict, person: str) -> str:
     if key.get("owner") != person:
         raise TakeoverError(f"refused: YubiKey {kid} is registered to {key.get('owner')!r}, "
                             f"not {person!r}")
-    if key.get("status", "active") != "active":
+    ok = ("active", "suspended") if allow_suspended else ("active",)
+    if key.get("status", "active") not in ok:
         raise TakeoverError(f"refused: YubiKey {kid} is {key.get('status')}, not active")
     p = (data.get("people") or {}).get(person)
     if not isinstance(p, dict) or p.get("tier") != "owner" or p.get("status", "active") != "active":

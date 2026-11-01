@@ -1,7 +1,8 @@
 """`cvc takeover ...` CLI (D15). Secrets come from prompts or env, never from argv.
 
 Env: CVC_VW_URL, CVC_VW_TOKEN (Vaultwarden bearer), CVC_AUTHENTIK_ISSUER,
-CVC_AUTHENTIK_CLIENT_ID, CVC_TAKEOVER_WEBHOOK (Home Assistant / push webhook URL).
+CVC_AUTHENTIK_CLIENT_ID, CVC_TAKEOVER_WEBHOOKS (comma-separated alert webhooks: email relay,
+push, Home Assistant; every alert goes to all of them).
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from pathlib import Path
 import httpx
 
 from cvc.takeover import flow
+from cvc.takeover.api import faq_text
 from cvc.takeover.model import DEFAULT_STATE_DIR, TakeoverError, TakeoverStore, utcnow
 from cvc.takeover.recovery import RecoveryPasswordStore
 from cvc.takeover.verifiers import (
@@ -56,15 +58,17 @@ def _env(name: str) -> str:
 
 
 def _deps(a: argparse.Namespace) -> flow.Deps:
-    hook = os.environ.get("CVC_TAKEOVER_WEBHOOK")
+    hooks = [h for h in os.environ.get("CVC_TAKEOVER_WEBHOOKS", "").split(",") if h.strip()]
     vw = (HttpEmergencyAccessClient(_env("CVC_VW_URL"), _env("CVC_VW_TOKEN"))
-          if a.cmd in ("start", "cancel", "view", "complete") else None)
+          if a.cmd in ("start", "cancel", "view", "complete", "tick", "reconcile") else None)
     return flow.Deps(Path(a.registry), TakeoverStore(a.state_dir), vw, YkmanReader(), utcnow,
-                     WebhookNotifier(hook) if hook else None)
+                     flow.MultiNotifier([WebhookNotifier(h.strip()) for h in hooks])
+                     if hooks else None)
 
 
 def _start(a: argparse.Namespace, d: flow.Deps) -> None:
     w = flow.StartWizard(d)
+    print(faq_text())
     print("[1/6] device certificate")
     did = w.step1_cert(a.initiator, Path(a.cert).read_bytes(),
                        [Path(c).read_bytes() for c in a.chain], Path(a.root_ca).read_bytes())
@@ -85,7 +89,8 @@ def _start(a: argparse.Namespace, d: flow.Deps) -> None:
     else:
         input(f"[5/6] remove your key; insert {target}'s YubiKey (primary or backup), Enter ")
         print(f"      ok: {w.step5_target_key()}")
-    rec = w.step6_start()
+    print(w.summary())
+    rec = w.step6_start(input("[6/6] confirm target's name: "))
     print(f"[6/6] started takeover {rec.id} (path {rec.path}): viewer access from day 15, "
           f"completion from day {rec.wait_days}")
 
@@ -107,8 +112,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--target")
     s.add_argument("--recovery-password", action="store_true",
                    help="no target YubiKey: use target's sealed recovery password (180 days)")
-    for name in ("cancel", "view", "status"):
+    for name in ("cancel", "view", "reconcile"):
         sub.add_parser(name).add_argument("id")
+    st = sub.add_parser("status", help="one record (id) or initiator status indicator")
+    st.add_argument("id", nargs="?")
+    st.add_argument("--initiator")
+    sub.add_parser("faq", help="show the takeover FAQ")
     c = sub.add_parser("complete")
     c.add_argument("id")
     c.add_argument("--rebind-agents", action="store_true",
@@ -125,11 +134,25 @@ def main(argv: list[str] | None = None) -> int:
         if a.cmd == "start":
             _start(a, d)
         elif a.cmd == "cancel":
-            input("insert the target owner's YubiKey and press Enter ")
-            print(f"cancelled {flow.cancel(d, a.id).id}")
+            input("insert your own YubiKey (target or another owner) and press Enter ")
+            rec = flow.cancel(d, a.id)
+            print(f"cancelled {rec.id} (by {rec.vetoed_by})")
+        elif a.cmd == "reconcile":
+            for line in flow.reconcile(d, a.id) or ["nothing to reconcile"]:
+                print(line)
+        elif a.cmd == "faq":
+            print(faq_text())
         elif a.cmd == "view":
             print(f"viewer access: {flow.view(d, a.id)} item(s) visible (read-only)")
+        elif a.cmd == "status" and a.initiator:
+            items = flow.status_items(d.store, a.initiator, utcnow())
+            for it in items:
+                print(f"[{it['icon']}] {it['text']}  ({it['id']}; FAQ: cvc takeover faq)")
+            if not items:
+                print("no active takeover")
         elif a.cmd == "status":
+            if not a.id:
+                raise TakeoverError("give a takeover id or --initiator <id>")
             rec = d.store.get(a.id)
             print(json.dumps({**rec.to_dict(), "phase": rec.phase(utcnow()),
                               "day": rec.day(utcnow())}, indent=2))
