@@ -228,3 +228,7 @@ step-ca, `deploy/step-ca`). All the certs sit under one human identity (`people.
 
 ## D16 — Access classification matrix  **[DECIDED 2026-11-01]**
 Two axes (data public/internal/private/secret × action read/relay/write/act/delegate), tier ceilings (scoped/low/medium/high/assistant), effective = min(agent, sponsor) ∩ role grants, secret only via broker single-use approved fetch; guest/family are sponsors, not tiers. See [ACCESS-CLASSIFICATION.md](ACCESS-CLASSIFICATION.md).
+Sponsored guest and family agents are not separate tiers: they use the agent tier ladder plus a `sponsor` (human) attribute (approved by Nathan).
+
+## D17 — Voluntary delegation  **[DECIDED 2026-11-01]**
+`cvc delegate start` wizard: strong identity, itemised preview (items above the recipient ceiling are revoked, never escalated), 48h revoke window, then execution via the takeover-completion machinery with the D14 owner-key guard. See [DELEGATION.md](DELEGATION.md).
