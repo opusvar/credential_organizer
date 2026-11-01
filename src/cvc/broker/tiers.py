@@ -103,9 +103,10 @@ class Approval:
     agent: str
     credential: str
     purpose: str
-    status: str = "pending"        # pending | approved | consumed
+    status: str = "pending"        # pending | approved | consumed | denied
     approver: str | None = None
     created: float = field(default_factory=time.time)
+    ttl: float = 15 * 60           # = the ApprovalRequest deadline window (D18, <= 24h)
 
 
 APPROVAL_TTL = 15 * 60
@@ -117,9 +118,11 @@ class ApprovalStore:
         self._lock = threading.Lock()
         self._items: dict[str, Approval] = {}
 
-    def create(self, agent: str, credential: str, purpose: str) -> Approval:
-        a = Approval(id=str(uuid.uuid4()), agent=agent, credential=credential.lower(),
-                     purpose=purpose, created=self._clock())
+    def create(self, agent: str, credential: str, purpose: str, ttl: float | None = None,
+               approval_id: str | None = None) -> Approval:
+        a = Approval(id=approval_id or str(uuid.uuid4()), agent=agent,
+                     credential=credential.lower(), purpose=purpose, created=self._clock(),
+                     ttl=APPROVAL_TTL if ttl is None else float(ttl))
         with self._lock:
             self._items[a.id] = a
         return a
@@ -127,7 +130,7 @@ class ApprovalStore:
     def get(self, approval_id: str) -> Approval | None:
         with self._lock:
             a = self._items.get(approval_id)
-            if a and self._clock() - a.created > APPROVAL_TTL:
+            if a and self._clock() - a.created > a.ttl:
                 del self._items[approval_id]
                 return None
             return a
@@ -138,6 +141,16 @@ class ApprovalStore:
             if a is None or a.status != "pending":
                 return None
             a.status = "approved"
+            a.approver = approver
+            return a
+
+    def deny(self, approval_id: str, approver: str | None = None) -> Approval | None:
+        """Denied / expired / cancelled: the record can never be consumed."""
+        a = self.get(approval_id)
+        with self._lock:
+            if a is None or a.status != "pending":
+                return None
+            a.status = "denied"
             a.approver = approver
             return a
 
