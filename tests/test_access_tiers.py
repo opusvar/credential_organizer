@@ -67,7 +67,7 @@ def test_unknown_granted_by_rejected():
 
 def test_guest_requires_expiry_and_ha():
     d = base()
-    d["people"]["g"] = {"tier": "guest-short", "tailnet": "short-guests",
+    d["people"]["g"] = {"tier": "guest-short", "tailnet": "guests",
                         "granted_by": "admin1", "ha": "view"}
     assert any("requires an expires" in e for e in errors(d))
     d["people"]["g"]["expires"] = "2026-12-01"
@@ -85,7 +85,7 @@ def test_ha_only_for_guests():
 def test_guest_tailnet_mismatch():
     d = base()
     d["people"]["g"] = {"tier": "guest-long", "tailnet": "family", "expires": "2027-01-01"}
-    assert any("long-guests" in e for e in errors(d))
+    assert any("belongs on tailnet guests" in e for e in errors(d))
 
 
 @pytest.mark.parametrize("grantor,tier,ok", [
@@ -151,7 +151,7 @@ def test_graph_tier_column():
     d = base()
     d["agents"]["s"] = {"tier": "scoped", "roles": ["a"]}
     out = build_graph(parse_registry(d), dt.date(2026, 11, 1))
-    assert "| id | type | tier | roles | expires | status |" in out
-    assert "| s | agent | scoped |" in out
+    assert "| id | type | tier | sponsor | roles | expires | status |" in out
+    assert "| s | agent | scoped | - |" in out
     assert "tier: scoped" in out and "tier: owner" in out
     assert "## People" in out

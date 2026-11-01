@@ -1,6 +1,7 @@
 """Typed model and validator for access/registry.yaml (see cvc.access docstring)."""
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import re
 from collections.abc import Iterator
@@ -19,20 +20,26 @@ KINDS = ENFORCED_KINDS | DOCUMENTED_KINDS
 MQTT_ACCESS = ("read", "write", "readwrite")
 
 # Allowed keys per kind; None = free-form (documented-only kinds).
+# D16 classification labels (docs/ACCESS-CLASSIFICATION.md).
+DATA_LEVELS = ("public", "internal", "private", "secret")
+ACTIONS = ("read", "relay", "write", "act", "delegate")
+GRANT_VIA = ("broker-approved",)        # the only path to secret data (D16 section 3.2)
+_LABEL_KEYS = {"data", "action"}
 _SYSTEM_KEYS: dict[str, set[str] | None] = {
-    "credential-store": {"kind", "description"},
-    "mqtt": {"kind", "description", "host", "port"},
+    "credential-store": {"kind", "description"} | _LABEL_KEYS,
+    "mqtt": {"kind", "description", "host", "port"} | _LABEL_KEYS,
 }
 _GRANT_KEYS: dict[str, set[str] | None] = {
-    "credential-store": {"system", "credential", "purposes"},
-    "mqtt": {"system", "topics", "access"},
+    "credential-store": {"system", "credential", "purposes", "via"} | _LABEL_KEYS,
+    "mqtt": {"system", "topics", "access", "via"} | _LABEL_KEYS,
 }
 _SECRET_KEYS = frozenset({"password", "passwd", "secret", "token", "api_key", "private_key",
                           "p12", "pin", "puk", "management_key"})
 DEVICE_KINDS = ("phone", "laptop", "desktop", "tablet")
 CERT_STORAGE = ("p12", "yubikey-piv")
 CERT_STATUS = ("pending", "active", "revoked", "expired")
-PERSON_STATUS = ("active", "taken-over")   # taken-over: D15 owner takeover
+PERSON_STATUS = ("active", "taken-over", "checked-out")  # taken-over: D15; checked-out: guest
+HWKEY_ROLES = ("primary", "backup")
 HWKEY_STATUS = ("active", "lost", "revoked", "retired", "suspended")
 HWKEY_LOCATIONS = ("on-person", "home-safe", "offsite")
 HWKEY_USES = ("fido2-vaultwarden", "piv-device-cert", "recovery")
@@ -40,7 +47,9 @@ PERSON_TIERS = ("guest-short", "guest-long", "media-only", "low", "medium", "hig
                 "owner")
 GUEST_TIERS = frozenset({"guest-short", "guest-long"})
 AGENT_TIERS = ("scoped", "low", "medium", "high", "assistant")
-TAILNETS = ("owner", "family", "long-guests", "short-guests", "agents", "machines")
+TAILNETS = ("owner", "family", "guests", "agents", "machines")
+_LEGACY_TAILNETS = {"long-guests": "guests", "short-guests": "guests"}
+GUEST_DEFAULT_DAYS = 5
 HA_ACCESS = ("none", "view", "limited-control")
 RESOURCE_KINDS = ("media", "ha", "dashboard", "library", "admin")
 PASSKEY_TIERS = frozenset({"high", "admin", "owner"})
@@ -62,6 +71,8 @@ class System:
     id: str
     kind: str
     attrs: dict[str, Any] = field(default_factory=dict)  # everything except `kind`
+    data: str | None = None          # DATA_LEVELS
+    action: str | None = None        # ACTIONS: highest action the system exposes
 
     @property
     def enforced(self) -> bool:
@@ -77,6 +88,9 @@ class Grant:
     topics: tuple[str, ...] = ()                # mqtt; may contain "{id}"
     access: str | None = None                   # mqtt: read|write|readwrite
     extra: dict[str, Any] = field(default_factory=dict)  # documented-only kinds
+    data: str | None = None                     # overrides the system's data label
+    action: str | None = None                   # action granted (defaults to system's)
+    via: str | None = None                      # GRANT_VIA
 
     def expand_topics(self, principal_id: str) -> list[str]:
         return [t.replace("{id}", principal_id) for t in self.topics]
@@ -120,6 +134,11 @@ class Agent(Principal):
     tier: str | None = None          # AGENT_TIERS
     tailnet: str | None = None       # TAILNETS
     granted_by: str | None = None    # person id
+    sponsor: str | None = None       # person id (D16 section 6); falls back to owner
+
+    @property
+    def sponsor_id(self) -> str | None:
+        return self.sponsor or self.owner
 
 
 @dataclass(frozen=True)
@@ -138,6 +157,13 @@ class Person:
     expires: dt.date | None = None
     granted_by: str | None = None    # person id
     status: str = "active"           # PERSON_STATUS
+    history: tuple[dict, ...] = ()
+
+    def active(self, today: dt.date | None = None) -> bool:
+        if self.status == "checked-out":
+            return False
+        today = today or dt.datetime.now().astimezone().date()
+        return self.expires is None or today <= self.expires
 
 
 @dataclass(frozen=True)
@@ -150,6 +176,7 @@ class HardwareKey:
     location: str
     enrolled: dt.date | None
     status: str
+    role: str | None = None      # HWKEY_ROLES (owner keys: exactly one active primary)
 
     @property
     def usable(self) -> bool:
@@ -259,7 +286,23 @@ def _date(v: Any, path: str, errs: list[str]) -> dt.date | None:
         return None
 
 
+def _labels(raw: dict, path: str, errs: list[str]) -> dict[str, str | None]:
+    return {"data": _opt_choice(raw.get("data"), DATA_LEVELS, f"{path}.data", errs),
+            "action": _opt_choice(raw.get("action"), ACTIONS, f"{path}.action", errs)}
+
+
 def _parse_grant(raw: Any, path: str, systems: dict[str, System], errs: list[str]) -> Grant | None:
+    g = _parse_grant_body(raw, path, systems, errs)
+    if g is None:
+        return None
+    return dataclasses.replace(
+        g, **_labels(raw, path, errs),
+        via=_opt_choice(raw.get("via"), GRANT_VIA, f"{path}.via", errs),
+        extra={k: v for k, v in g.extra.items() if k not in ("data", "action", "via")})
+
+
+def _parse_grant_body(raw: Any, path: str, systems: dict[str, System],
+                      errs: list[str]) -> Grant | None:
     if not isinstance(raw, dict):
         errs.append(f"{path}: must be a mapping")
         return None
@@ -338,7 +381,9 @@ def parse_registry(data: Any) -> Registry:
             for k in raw:
                 if k not in allowed:
                     errs.append(f"{p}: field {k!r} not valid for kind {kind}")
-        systems[sid] = System(sid, kind, {k: v for k, v in raw.items() if k != "kind"})
+        systems[sid] = System(sid, kind, {k: v for k, v in raw.items()
+                                          if k not in ("kind", "data", "action")},
+                              **_labels(raw, p, errs))
 
     roles: dict[str, Role] = {}
     for rid, raw in _mapping(data, "roles", errs).items():
@@ -380,8 +425,8 @@ def parse_registry(data: Any) -> Registry:
                 agents[pid] = Agent(
                     pid, role_ids, expires, token_sha256=th, owner=raw.get("owner"),
                     tier=_opt_choice(raw.get("tier"), AGENT_TIERS, f"{p}.tier", errs),
-                    tailnet=_opt_choice(raw.get("tailnet"), TAILNETS, f"{p}.tailnet", errs),
-                    granted_by=raw.get("granted_by"))
+                    tailnet=_tailnet(raw.get("tailnet"), f"{p}.tailnet", errs),
+                    granted_by=raw.get("granted_by"), sponsor=raw.get("sponsor"))
             else:
                 auth = None
                 a = raw.get("auth")
@@ -396,10 +441,29 @@ def parse_registry(data: Any) -> Registry:
                                         location=raw.get("location"))
 
     people, hwkeys, devices = _parse_humans(data, roles, seen, errs)
+    agents = _apply_sponsors(agents, people, errs)
     resources = _parse_resources(data, errs)
     if errs:
         raise RegistryError(errs)
     return Registry(1, systems, roles, agents, machines, people, hwkeys, devices, resources)
+
+
+def _apply_sponsors(agents: dict[str, Agent], people: dict[str, Person],
+                    errs: list[str]) -> dict[str, Agent]:
+    """Validate sponsors; guest-sponsored agents expire with their guest (D16 section 6)."""
+    out = {}
+    for aid, a in agents.items():
+        if a.sponsor is not None and a.sponsor not in people:
+            errs.append(f"agents.{aid}.sponsor: unknown person {a.sponsor!r}")
+        sp = people.get(a.sponsor_id or "")
+        if sp is not None and sp.tier in GUEST_TIERS:
+            end = sp.expires
+            if sp.status == "checked-out" and end is not None:
+                end = end - dt.timedelta(days=1)     # checked out: access ended that day
+            if end is not None and (a.expires is None or end < a.expires):
+                a = dataclasses.replace(a, expires=end)
+        out[aid] = a
+    return out
 
 
 def _parse_resources(data: dict, errs: list[str]) -> dict[str, Resource]:
@@ -453,6 +517,13 @@ def _opt_choice(v: Any, allowed: tuple[str, ...], path: str, errs: list[str]) ->
     return None if v is None else _choice(v, allowed, path, errs)
 
 
+def _tailnet(v: Any, path: str, errs: list[str]) -> str | None:
+    if v in _LEGACY_TAILNETS:
+        errs.append(f"{path}: tailnet {v!r} was merged into {_LEGACY_TAILNETS[v]!r} (D16)")
+        return str(v)
+    return _opt_choice(v, TAILNETS, path, errs)
+
+
 def _hex(v: Any, path: str, errs: list[str], exact64: bool = False) -> str | None:
     if v is None:
         return None
@@ -473,11 +544,12 @@ def _parse_humans(data: dict, roles: dict, seen: dict, errs: list[str]):
         people[pid] = Person(
             pid, raw.get("email"),
             tier=_opt_choice(raw.get("tier"), PERSON_TIERS, f"{p}.tier", errs),
-            tailnet=_opt_choice(raw.get("tailnet"), TAILNETS, f"{p}.tailnet", errs),
+            tailnet=_tailnet(raw.get("tailnet"), f"{p}.tailnet", errs),
             ha=_choice(raw.get("ha", "none"), HA_ACCESS, f"{p}.ha", errs),
             expires=_date(raw.get("expires"), f"{p}.expires", errs),
             granted_by=raw.get("granted_by"),
-            status=_choice(raw.get("status", "active"), PERSON_STATUS, f"{p}.status", errs))
+            status=_choice(raw.get("status", "active"), PERSON_STATUS, f"{p}.status", errs),
+            history=tuple(h for h in (raw.get("history") or []) if isinstance(h, dict)))
     for pid, person in people.items():
         if person.granted_by is not None and person.granted_by not in people:
             errs.append(f"people.{pid}.granted_by: unknown person {person.granted_by!r}")
@@ -512,7 +584,8 @@ def _parse_humans(data: dict, roles: dict, seen: dict, errs: list[str]):
             kid, owner(raw.get("owner"), f"{p}.owner"), str(raw.get("model") or ""), serial,
             tuple(uses), _choice(raw.get("location"), HWKEY_LOCATIONS, f"{p}.location", errs),
             _date(raw.get("enrolled"), f"{p}.enrolled", errs),
-            _choice(raw.get("status", "active"), HWKEY_STATUS, f"{p}.status", errs))
+            _choice(raw.get("status", "active"), HWKEY_STATUS, f"{p}.status", errs),
+            _opt_choice(raw.get("role"), HWKEY_ROLES, f"{p}.role", errs))
 
     devices: dict[str, Device] = {}
     for did, raw in _mapping(data, "devices", errs).items():

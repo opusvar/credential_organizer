@@ -10,13 +10,20 @@
 # sha256 of their service token; machine passwords live in Vaultwarden.
 version: 1
 
+# D16 labels (docs/ACCESS-CLASSIFICATION.md), on systems and optionally on grants:
+#   data:   public | internal | private | secret   (label credentials by what they unlock)
+#   action: read | relay | write | act | delegate  (system: highest it exposes; grant: granted)
+# A grant inherits the system's labels unless it sets its own. `cvc-access check` errors when
+# an agent's role exceeds its tier ceiling and warns when the cell is approval-required.
+# secret is never a standing grant: only `via: broker-approved` (single-use, per-use
+# approval) and only for an effective high tier.
 systems:
   # Enforced kinds (v1): credential-store, mqtt.
-  vaultwarden: {kind: credential-store}          # reached via the cvc broker
-  ha-mqtt: {kind: mqtt, host: 192.168.1.208, port: 1883}
+  vaultwarden: {kind: credential-store, data: private, action: act}  # reached via the cvc broker
+  ha-mqtt: {kind: mqtt, host: 192.168.1.208, port: 1883, data: internal, action: act}
   # Documented-only kinds (http, cluster, ssh, service): free-form fields, no generator,
   # `cvc-access check` reports their grants as "unenforced".
-  workers: {kind: http, hosts: [100.73.65.49, 100.127.180.96]}
+  workers: {kind: http, hosts: [100.73.65.49, 100.127.180.96], data: internal, action: write}
 
 roles:
   billing-agent:
@@ -24,16 +31,18 @@ roles:
     grants:
       # credential: a Vaultwarden item UUID, or a capability sentinel ("backup").
       # purposes: required, non-empty; ["*"] = any purpose.
-      - {system: vaultwarden, credential: 11111111-2222-3333-4444-555555555555, purposes: [pay-invoice]}
+      # Paying is an act: approval-required even for medium/high (check warns).
+      - {system: vaultwarden, credential: 11111111-2222-3333-4444-555555555555, purposes: [pay-invoice], data: private, action: act}
   backup-runner:
     description: May trigger the encrypted vault export
     grants:
-      - {system: vaultwarden, credential: backup, purposes: ["*"]}
+      # The vault export unlocks everything: secret, broker-mediated per use.
+      - {system: vaultwarden, credential: backup, purposes: ["*"], data: secret, action: read, via: broker-approved}
   sensor-publish:
     description: Each sensor publishes only under its own topic tree
     grants:
       # access: read | write | readwrite. "{id}" expands to the machine's id.
-      - {system: ha-mqtt, topics: ["sensors/{id}/#"], access: write}
+      - {system: ha-mqtt, topics: ["sensors/{id}/#"], access: write, action: write}
   home-assistant:
     description: >
       Home Assistant broker client. readwrite '#' is the safe default: HA subscribes to
@@ -44,22 +53,40 @@ roles:
   cvc-remind-publisher:
     description: cvc-remind HA discovery + state (src/cvc/reminders/mqtt_publish.py)
     grants:
-      - {system: ha-mqtt, topics: ["homeassistant/sensor/cvc_stale_credentials/config", "cvc/reminders/#"], access: write}
+      - {system: ha-mqtt, topics: ["homeassistant/sensor/cvc_stale_credentials/config", "cvc/reminders/#"], access: write, action: write}
+  worker-caller-read:
+    description: Read-only calls to inference workers (documented only)
+    grants:
+      - {system: workers, paths: ["/v1/models"], action: read}
   worker-caller:
     description: Call inference workers (documented only)
     grants:
-      - {system: workers, paths: ["/v1/*"]}
+      - {system: workers, paths: ["/v1/*"], action: write}
 
-agents:          # AI agents (broker principals)
+agents:          # AI agents (broker principals). All agents live on tailnet `agents`.
+  # tier: scoped | low | medium | high | assistant. sponsor: the human principal (D16 §6);
+  # effective ceiling = min(tier, sponsor's ceiling). Guest-sponsored: capped at low and
+  # expire with the guest (incl. `cvc-access guest checkout`). Non-owner sponsors cap at
+  # medium. `owner` is kept and acts as the sponsor when `sponsor` is absent.
   playwright-billing:
     roles: [billing-agent]
     token_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+    tier: medium
+    tailnet: agents
     owner: nathan
+    sponsor: nathan
   personal-dashboard:
     roles: [worker-caller, backup-runner]
     token_sha256: "1111111111111111111111111111111111111111111111111111111111111111"
+    tier: high
+    tailnet: agents
     owner: nathan
     expires: 2027-01-31      # optional; after this date the agent gets allow: []
+  visitor-helper:           # guest-sponsored: requested medium, effective low
+    roles: [worker-caller-read]
+    tier: medium
+    tailnet: agents
+    sponsor: visitor
 
 machines:        # sensors/devices: one MQTT user each
   garage-temp:
@@ -80,7 +107,9 @@ machines:        # sensors/devices: one MQTT user each
 people:
   nathan: {email: nathan@local, tier: owner, tailnet: owner}
   sam: {email: sam@local, tier: medium, tailnet: family, granted_by: nathan}
-  visitor: {tier: guest-long, tailnet: long-guests, expires: 2026-12-31, granted_by: nathan}
+  # Guests: tailnet guests. `cvc-access guest add` defaults expires to today + 5 days;
+  # `cvc-access guest checkout <id>` ends access now and revokes their sponsored agents.
+  visitor: {tier: guest-long, tailnet: guests, expires: 2026-12-31, granted_by: nathan}
 
 # ── Resource catalog: human-facing services behind the tier gate (cvc.tiergate) ──
 # kind: media | ha | dashboard | library | admin. min_tier: a people tier (see above).
@@ -102,6 +131,7 @@ hardware_keys:   # YubiKeys: Vaultwarden FIDO2 2FA, PIV device certs, vault reco
     location: on-person          # on-person | home-safe | offsite
     enrolled: 2026-10-01
     status: active               # active | lost | revoked | retired
+    role: primary                # primary | backup; each owner needs exactly one primary
   yk-backup:
     owner: nathan
     model: "YubiKey 5 NFC"
@@ -110,6 +140,7 @@ hardware_keys:   # YubiKeys: Vaultwarden FIDO2 2FA, PIV device certs, vault reco
     location: home-safe
     enrolled: 2026-10-01
     status: active
+    role: backup
 
 devices:         # principals: they hold roles like agents and machines
   nathan-iphone:
