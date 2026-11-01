@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 
@@ -32,7 +32,7 @@ def _parse_rotated(item: dict) -> datetime | None:
         login = item.get("login") or {}
         raw = login.get("passwordRevisionDate") or item.get("creationDate")
         if raw:
-            return datetime.fromisoformat(raw.rstrip("Z")).replace(tzinfo=timezone.utc)
+            return datetime.fromisoformat(raw.rstrip("Z")).replace(tzinfo=UTC)
     except (ValueError, TypeError):
         pass
     return None
@@ -99,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
                     continue
                 try:
                     count = times_pwned(rec.password, client=http)
-                except Exception as exc:  # noqa: BLE001
+                except Exception:  # noqa: BLE001
                     hibp_failures += 1
                     continue
                 if count:

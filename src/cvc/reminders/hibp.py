@@ -14,7 +14,7 @@ _TIMEOUT = 10.0
 
 
 def _prefix_suffix(password: str) -> tuple[str, str]:
-    digest = hashlib.sha1(password.encode("utf-8")).hexdigest().upper()  # noqa: S324 (k-anon by design)
+    digest = hashlib.sha1(password.encode("utf-8")).hexdigest().upper()
     return digest[:5], digest[5:]
 
 

@@ -13,8 +13,7 @@ def _norm_host(uri: str) -> str:
             break
     s = s.split("/", 1)[0].split("?", 1)[0]
     s = s.split(":", 1)[0]
-    if s.startswith("www."):
-        s = s[4:]
+    s = s.removeprefix("www.")
     return s
 
 

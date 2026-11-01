@@ -26,7 +26,7 @@ def _build(data, today=TODAY):
 
 
 def _mermaid(out):
-    return re.search(r"```mermaid\n(.*?)```", out, re.S).group(1)
+    return re.search(r"```mermaid\n(.*?)```", out, re.DOTALL).group(1)
 
 
 def test_registered():
@@ -90,7 +90,7 @@ def test_id_sanitizing_stable_and_unique():
     d["agents"]["a_b"] = {}
     out = _build(d)
     assert out == _build(d)
-    ids = re.findall(r"^\s*(\w+)\[", _mermaid(out), re.M)
+    ids = re.findall(r"^\s*(\w+)\[", _mermaid(out), re.MULTILINE)
     assert len(ids) == len(set(ids))
     assert "p_a_b" in ids and "p_a_b_2" in ids
 

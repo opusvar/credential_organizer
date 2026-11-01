@@ -17,7 +17,7 @@ import re
 import shutil
 import subprocess
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ..vault.client import _BW, VaultError
@@ -85,7 +85,7 @@ def export_encrypted(dest_dir: str) -> list[Path]:
 
     dest = Path(dest_dir)
     dest.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
     # NOTE: unlike vault.client._run(), this passes the full process environment rather than
     # an allowlist. Deliberate: export is a one-shot operation run by the backup job (whose
@@ -229,7 +229,7 @@ def prune(dest_dir: str, retention_days: int) -> int:
     if not dest.exists():
         return 0
 
-    cutoff = datetime.now(timezone.utc).timestamp() - retention_days * 86400
+    cutoff = datetime.now(UTC).timestamp() - retention_days * 86400
     removed = 0
     for f in dest.glob("vault-backup-*.json"):
         if not f.is_file():  # a directory matching the glob would make unlink() raise

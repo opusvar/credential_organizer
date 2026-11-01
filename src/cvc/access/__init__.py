@@ -21,6 +21,7 @@ Model API for generators (all frozen dataclasses):
 New artifacts: decorate `fn(registry, today) -> str` with `@register_builder("name")` and
 import the module in cvc.access.cli; `cvc-access build name` then works.
 """
+from cvc.access import brokeracl as _brokeracl  # noqa: F401  (registers builder)
 from cvc.access.builders import BUILDERS, register_builder
 from cvc.access.model import (
     ENFORCED_KINDS,
@@ -28,11 +29,11 @@ from cvc.access.model import (
     Agent,
     Device,
     DeviceCert,
-    HardwareKey,
-    Person,
     Grant,
+    HardwareKey,
     Machine,
     MachineAuth,
+    Person,
     Principal,
     Registry,
     RegistryError,
@@ -41,11 +42,25 @@ from cvc.access.model import (
     load_registry,
     parse_registry,
 )
-from cvc.access import brokeracl as _brokeracl  # noqa: F401,E402  (registers builder)
 
 __all__ = [
-    "BUILDERS", "ENFORCED_KINDS", "KINDS", "Agent", "Device", "DeviceCert",
-    "HardwareKey", "Person", "Grant", "Machine", "MachineAuth",
-    "Principal", "Registry", "RegistryError", "Role", "System", "load_registry",
-    "parse_registry", "register_builder",
+    "BUILDERS",
+    "ENFORCED_KINDS",
+    "KINDS",
+    "Agent",
+    "Device",
+    "DeviceCert",
+    "Grant",
+    "HardwareKey",
+    "Machine",
+    "MachineAuth",
+    "Person",
+    "Principal",
+    "Registry",
+    "RegistryError",
+    "Role",
+    "System",
+    "load_registry",
+    "parse_registry",
+    "register_builder",
 ]

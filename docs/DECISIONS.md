@@ -57,7 +57,7 @@ Caddy rejected from broker path — see D8.
 flags `--synchronize` and `--config-dir`. Neither exists in the installed client (abraunegg
 **v2.5.11**): `--synchronize` was removed in favour of `--sync`, and the config-dir flag has
 always been `--confdir`. Both wrong spellings exit non-zero with `Unrecognized option`. Since
-sync failures are non-fatal here, that would have degraded silently to "the off-host backup
+sync failures were non-fatal at the time, that would have degraded silently to "the off-host backup
 never happens" — the exact outcome this decision exists to prevent. The implementation and
 the commands below use the real flags.
 
@@ -75,43 +75,42 @@ exited 0. Now the copy is skipped for same-file sources but the sync always runs
 BACKUP_DIR is the separate `/mnt/data/cvc-backups`, and a copy/sync failure exits non-zero.
 - Alternatives rejected: rclone (would require OAuth setup from scratch); rsync to mesh node
   (off-node but not off-site; Windows/Mac nodes are not always-on storage); leaving data only on
-  the PVC (single-disk failure = data loss, violates D4 intent).
+  the PVC (single-disk failure = data loss, violates D4 intent). (PVC text is historical: the PVC
+  went away with the CronJob, see D10.)
 
-**Mechanism:**
-- `backup/__main__.py` calls `export_encrypted()` → writes to PVC (`/backups/`) → copies the file
-  to `/mnt/data/onedrive/dan_ai_tool_dock/cvc-backups/` → runs
+**Mechanism (current, since PR #3 and D10):**
+- `backup/__main__.py` calls `export_encrypted()` → writes to the local staging dir
+  `/mnt/data/cvc-backups/` (`BACKUP_DIR`, set in `deploy/cvc-backup.service`) → copies the file
+  to the OneDrive sync dir `/mnt/data/onedrive/dan_ai_tool_dock/cvc-backups/`
+  (`ONEDRIVE_DEST_DIR`) → runs
   `onedrive --sync --single-directory dan_ai_tool_dock/cvc-backups --confdir <ONEDRIVE_CONFIG_DIR>`.
-- The PVC copy is the primary (fast, always available); OneDrive is the durable off-host copy.
-- Copy and sync failures are non-fatal: logged, exit 0, so a sync outage doesn't break the
-  backup job or leave the PVC export invalid.
+- The local staging copy is the primary (fast, always available); OneDrive is the durable
+  off-host copy.
+- Copy and sync failures are fatal to the exit code: the error goes to stderr and the job exits
+  non-zero (PR #3, F8). Retention pruning still runs on the good local export, and a pruning
+  failure alone does not fail the job.
 - On-demand trigger: `POST /v1/backup/trigger` on the broker (ACL-gated, purpose `"backup"`).
-  Runs the same pipeline as the CronJob.
+  Runs the same pipeline as the timer.
 
-**Constraint:** The `onedrive` service is user-scoped (`systemctl --user`). The k3s pod cannot
-call it directly — the CronJob runs `onedrive --sync` as a subprocess with
+**Constraint (current):** `cvc-backup` runs as a host systemd user timer as `admin` (D10), so it
+calls the host `onedrive` directly with the host's own `~/.config/onedrive/`; no bind-mounts are
+involved.
+
+### Historical: CronJob design (superseded by D10, kept for context)
+*The text below describes the original k3s CronJob deployment. It no longer applies.*
+
+The CronJob exported to a PVC (`/backups/`) and ran `onedrive --sync` as a subprocess with
 `/home/admin/.config/onedrive/` bind-mounted read-only (refresh token) and the sync-dir mounted
-read-write. `uid 1000` (cvc) must be able to write to `/mnt/data/onedrive/dan_ai_tool_dock/cvc-backups/`
-(host `admin` is already uid 1000, so this lines up by default; `fsGroup: 1000` does NOT apply
-to hostPath volumes, only to the PVC — asserted in `deploy/setup-phase23.sh`).
+read-write. `uid 1000` (cvc) had to write to `/mnt/data/onedrive/dan_ai_tool_dock/cvc-backups/`
+(host `admin` is already uid 1000; `fsGroup: 1000` does NOT apply to hostPath volumes, only to
+the PVC, asserted in `deploy/setup-phase23.sh`).
 
-**OPEN GAP [2026-09-13]:** the in-pod sync leg does not work yet, and the staging copy is
-currently the whole benefit:
-1. `onedrive` is **not in `cvc:latest`** (the Dockerfile installs only nodejs/npm + `bw`), and
-   the host binary cannot be bind-mounted in: it is dynamically linked against the host's
-   glibc 2.39 (Ubuntu 24.04) plus the LDC D runtime, and the image is `python:3.11-slim`
-   (Debian bookworm, glibc 2.36).
-2. Mounting the confdir read-only conflicts with the client needing to write `items.sqlite3`
-   and its hash files there, so shipping the binary is necessary but not sufficient.
-3. No `onedrive` service is running on the host (`systemctl --user is-active onedrive` →
-   `inactive`), so nothing picks the staged file up automatically today.
-
-Because copy/sync failures are non-fatal, today's behaviour is: export lands on the PVC, a copy
-lands on the NVMe staging dir, and the sync leg logs
-`WARNING: OneDrive sync failed — onedrive not found at /usr/local/bin/onedrive` and exits 0.
-To close it, pick one: (a) add `onedrive` to the image **and** give it a writable confdir
-(copy the config in an init container, or mount only `refresh_token` read-only), (b) a host
-systemd path-unit/timer that syncs when the staging dir changes, or (c) run `cvc-backup` on
-the host rather than in k3s. (b) is the least invasive and keeps the pod's confdir read-only.
+**OPEN GAP [2026-09-13], closed by D10:** the in-pod sync leg did not work: `onedrive` was not in
+`cvc:latest` and the host binary could not be bind-mounted (glibc 2.39 host vs 2.36 in
+`python:3.11-slim`); mounting the confdir read-only conflicted with the client writing
+`items.sqlite3`; and no `onedrive` service ran on the host. With non-fatal failures the sync leg
+logged a warning and exited 0. Running on the host as a systemd user timer (option (c) of the
+original analysis) removed all of this.
 
 ## D10 — remind/backup deployment model  **[DECIDED 2026-09-13]**
 **Decision:** Run `cvc-remind` and `cvc-backup` as host systemd user timers on the OPi, not as
@@ -125,8 +124,8 @@ k3s CronJobs.
 - Single-node k3s provides no scheduling benefit for these jobs. CronJob retry/history machinery
   is pure overhead; `journalctl --user -u cvc-remind` is simpler than `kubectl -n cvc get jobs`.
 - Source changes take effect via `pip install -e .` without a full image rebuild + k3s import cycle.
-- Backup pipeline collapses to two steps: export directly to the OneDrive staging dir, run
-  `onedrive --sync`. No PVC, no intermediate NVMe copy.
+- Backup pipeline has no PVC: export to the local staging dir `/mnt/data/cvc-backups`
+  (`BACKUP_DIR`), copy to the OneDrive sync dir, run `onedrive --sync` (see D9).
 
 **What's given up:**
 - CPU/memory limits enforced by the kernel (mitigate with `CPUQuota=` and `MemoryMax=` in the
@@ -138,8 +137,9 @@ k3s CronJobs.
 **Broker (Phase 4) stays in k3s:** it earns the overhead — hostPort isolation, PVC audit log,
 Recreate strategy for the port mutex, resource limits on the bw subprocess.
 
-**deploy/remind-cronjob.yaml and deploy/backup-cronjob.yaml are kept** as reference and fallback
-but are not applied. The active deployment is the systemd units in deploy/.
+**deploy/remind-cronjob.yaml and deploy/backup-cronjob.yaml are kept** as historical reference
+and fallback but are not applied; the k3s CronJobs are superseded by the systemd user timers
+(`deploy/cvc-remind.*`, `deploy/cvc-backup.*`).
 
 ## D11 — Hardware recovery keys  **[RESOLVED 2026-10-31]** (decided 2026-09-13)
 **Decision:** YubiKeys will serve as hardware recovery keys for the vault.
@@ -166,8 +166,8 @@ the YubiKey provides offline, hardware-bound access to the master password.
 
 **Effect on cvc-backup:** the encrypted export (D9) is already encrypted with the vault master
 password. YubiKey integration does not change the export format — it changes how the master
-password itself is protected and recovered. `docs/RUNBOOK-recovery.md` will need a YubiKey
-section once the mode is chosen.
+password itself is protected and recovered. The mode is chosen (see Resolution); the YubiKey
+procedures live in `deploy/yubikey/RUNBOOK-yubikey.md`.
 
 ## D8 — mTLS / Caddy in broker path  **[DECIDED 2026-09-12]**
 **Considered:** Using short-lived client certificates (mTLS) so bearer tokens are only exchanged at
@@ -193,6 +193,19 @@ validates it and generates artifacts. `deploy/broker-acl.yaml` becomes generated
 - No secrets in the registry: only `token_sha256`. Machine passwords stay in Vaultwarden.
 - Expired agents generate `allow: []`. Generators register through `@register_builder`, so the
   Mosquitto ACL and Mermaid graph arrive as new modules without changing the CLI dispatch.
+
+**Tier model (decided 2026-10-31, not yet implemented):**
+- Human tiers, lowest to highest: guest-short < guest-long < media-only < low < medium < high <
+  admin < owner.
+- Agent tiers: scoped < low < medium < high < assistant.
+- Authentication: guest through medium = Tailscale + device cert; high = passkey for sensitive
+  actions; admin = passkey always; owner = YubiKey only.
+- Guest Home Assistant access is configurable per guest: `none` | `view` | `limited-control`.
+- The grantor must be at least 2 tiers above the tier being granted.
+- Separate tailnets (owner, family, long-guests, short-guests, agents, machines) are network
+  walls only; authorization lives in certs and tokens, not in tailnet membership.
+- The tier rides in the cert URI SAN `urn:cvc:tier:<tier>`, enforced by Traefik and a tier-gate
+  forwardAuth (opusvar/opi_base_config#3).
 
 ## D13 — Per-device certificates from a home CA (supersedes D8 for human devices)  **[DECIDED 2026-10-31]**
 **Problem:** human devices (phone, laptops, desktop) reached home services with shared or

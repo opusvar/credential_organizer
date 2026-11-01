@@ -1,11 +1,11 @@
 """Unit tests for the reminder policy (stale / reuse / weak)."""
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from cvc.reminders.policy import CredRecord, evaluate
 
 
 def _old(days: int) -> datetime:
-    return datetime.now(timezone.utc) - timedelta(days=days)
+    return datetime.now(UTC) - timedelta(days=days)
 
 
 def test_flags_stale_reused_and_weak():

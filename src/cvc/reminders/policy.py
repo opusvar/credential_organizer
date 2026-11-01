@@ -6,7 +6,7 @@ Reason strings never include the password itself.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 @dataclass
@@ -28,8 +28,8 @@ class Finding:
 def _age_days(dt: datetime | None) -> int | None:
     if dt is None:
         return None
-    now = datetime.now(timezone.utc)
-    ref = dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    now = datetime.now(UTC)
+    ref = dt if dt.tzinfo else dt.replace(tzinfo=UTC)
     return (now - ref).days
 
 

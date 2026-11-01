@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import Callable
+from collections.abc import Callable
 
 from cvc.access.model import Registry
 

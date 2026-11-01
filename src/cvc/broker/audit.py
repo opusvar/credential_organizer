@@ -12,7 +12,7 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 GENESIS = "0" * 64
@@ -24,7 +24,7 @@ class AuditEvent:
     credential: str
     purpose: str
     outcome: str          # "allow" | "deny:<reason>"
-    ts: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    ts: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 class AuditLog:
