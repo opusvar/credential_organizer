@@ -12,11 +12,11 @@
    yubikey-attest ACME device-attest-01, format "step" -> Mac/Windows, YubiKey PIV 9a key generated on-key
    apple-attest   ACME device-attest-01, format "apple" -> managed Apple devices (needs MDM; optional)
    ios-scep       SCEP  -> iOS profiles that enroll on-device (key never leaves phone)
- Lifetimes: default = max = 90d (2160h), renewal allowed, no renewal after expiry.
+ Lifetimes: per tier, see Tier issuance. Tier-bearing certs are not renewable (re-issue by an admin).
  Revocation: passive + CRL at /1.0/crl. No OCSP (commercial only).
 ```
 
-- Phones: `issue-p12.sh <device-id>` (OIDC sign-in -> cert -> `.p12` -> `.mobileconfig`).
+- Phones: admin runs `issue-p12.sh --person P --device D --tier T` (see Tier issuance; `.p12` -> `.mobileconfig`).
   Preferable long term: a `.mobileconfig` with a `com.apple.security.scep` payload
   pointing at `/scep/ios-scep`, so the key is generated on the phone.
 - Mac/Windows: generate a key in PIV slot 9a on the YubiKey, then e.g.
@@ -71,3 +71,36 @@
 
 `kubectl delete -f deploy/step-ca/deployment.yaml` (stops issuance; existing certs stay valid until not_after).
 Full removal: `kubectl delete ns pki && kubectl delete pv pki-step-ca`. `/mnt/data/pki` is retained (PV `Retain`) — delete it only deliberately. Remove the root from clients to fully untrust.
+
+## Tier issuance (urn:cvc:tier SAN)
+
+Every device cert carries `urn:cvc:person:<id>`, `urn:cvc:device:<id>`, `urn:cvc:tier:<tier>`
+as URI SANs, rendered by `templates/device-leaf.tpl` solely from signed token claims
+(`.Token.person/device/tier`). The template never reads `.SANs`, `.Insecure.CR` or `.Insecure.User`.
+
+**Mechanism chosen: admin-held JWK "issuer" provisioners.** The JWK private key is stored
+encrypted (`ISSUER_JWK_ENCRYPTED`); only admins know the password, so only an admin can mint a
+token with `--set tier=...`. A user cannot self-assign a tier because no user-reachable
+provisioner can emit one: `authentik` (OIDC), `yubikey-attest`, `apple-attest`, `ios-scep` all use
+`templates/no-tier.tpl`, which emits only the subject and no URI SANs, so a CSR carrying
+`urn:cvc:tier:owner` is ignored. Relying parties must treat a cert with no tier SAN as no access.
+
+| Tier | Provisioner | Lifetime (default = max) |
+|---|---|---|
+| guest-short | issuer-guest-short | 48h |
+| guest-long | issuer-guest-long | 720h (30d) |
+| media-only, low, medium, high | issuer-family | 8760h (365d, phones; Tailscale still required) |
+| admin, owner | issuer-admin | 2160h (90d) |
+
+Lifetimes are enforced by per-provisioner `claims` (max), and each provisioner's `templateData.AllowedTiers`
+is checked in the template, so a token from `issuer-guest-short` cannot yield `owner`. The global max is 8760h.
+
+Tradeoffs vs alternatives:
+- OIDC `templateData` per issuance: templateData is static config in `ca.json` (needs a CA restart per change) and OIDC identity proves the person, not the admin's intent. Rejected.
+- "Admin issues on behalf" via OIDC: step-ca has no impersonation; would need a custom service. More code, same trust root.
+- JWK token: signed, one-time-ish, short-lived, no extra service. Cost: admin password handling; a stolen password plus the encrypted key lets an attacker mint any tier in its class (rotate `ISSUER_JWK_*`, which also appears in the k8s secret).
+
+## Template/doc verification (smallstep.com/docs/step-ca/templates, read 2026-10-31)
+
+- Confirmed: `uris` and `sans` with `type: uri`; `.Token.<claim>` exposes token claims; `.Insecure.User` and `.Insecure.CR` are unauthenticated; wrap values in `toJson`; `templateFile` + `templateData` under provisioner `options.x509`; templateFile may be an absolute path.
+- Assumed (not on pages read): `step ca token --set k=v` placing claims where `.Token.k` reads them; `fail`/`has` available in the template func map (sprig); `JWK` provisioner fields `key`/`encryptedKey` and that `key` is a JSON object (hence the init container substitutes the quoted placeholder); `--not-after` on `step ca token`. Dry-run against a throwaway step-ca before applying.
