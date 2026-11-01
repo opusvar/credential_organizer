@@ -10,9 +10,13 @@
 #     --from-literal=OIDC_CLIENT_ID=<authentik client id> \
 #     --from-literal=OIDC_CLIENT_SECRET=<authentik client secret> \
 #     --from-literal=SCEP_CHALLENGE=<random challenge> \
+#     --from-literal=ISSUER_JWK_PUBLIC=<public JWK json, from init-issuer step> \
+#     --from-literal=ISSUER_JWK_ENCRYPTED=<JWE of private JWK; admin password never stored here> \
 #     --from-file=password=<file holding intermediate key password>
 #   kubectl -n pki create configmap step-ca-config \
-#     --from-file=ca.json.tmpl=deploy/step-ca/ca.json.tmpl
+#     --from-file=ca.json.tmpl=deploy/step-ca/ca.json.tmpl \
+#     --from-file=device-leaf.tpl=deploy/step-ca/templates/device-leaf.tpl \
+#     --from-file=no-tier.tpl=deploy/step-ca/templates/no-tier.tpl
 #
 # Secrets are injected at pod start by the render-config initContainer:
 # ca.json.tmpl (ConfigMap, no secrets) -> /home/step/config/ca.json (on the
@@ -50,11 +54,14 @@ spec:
             - |
               set -eu
               umask 077
-              mkdir -p /home/step/config
+              mkdir -p /home/step/config /home/step/templates
+              cp /tmpl/device-leaf.tpl /tmpl/no-tier.tpl /home/step/templates/
               awk '{
                 gsub(/__OIDC_CLIENT_ID__/, ENVIRON["OIDC_CLIENT_ID"]);
                 gsub(/__OIDC_CLIENT_SECRET__/, ENVIRON["OIDC_CLIENT_SECRET"]);
                 gsub(/__SCEP_CHALLENGE__/, ENVIRON["SCEP_CHALLENGE"]);
+                gsub(/"__ISSUER_JWK_PUBLIC__"/, ENVIRON["ISSUER_JWK_PUBLIC"]);
+                gsub(/__ISSUER_JWK_ENCRYPTED__/, ENVIRON["ISSUER_JWK_ENCRYPTED"]);
                 print }' /tmpl/ca.json.tmpl > /home/step/config/ca.json
           envFrom:
             - secretRef:

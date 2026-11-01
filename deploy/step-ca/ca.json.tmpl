@@ -4,9 +4,18 @@
   "crt": "/home/step/certs/intermediate_ca.crt",
   "key": "/home/step/secrets/intermediate_ca_key",
   "address": ":9000",
-  "dnsNames": ["100.106.97.34", "orangepi6.humpback-krait.ts.net", "localhost"],
-  "logger": {"format": "json"},
-  "db": {"type": "badgerv2", "dataSource": "/home/step/db"},
+  "dnsNames": [
+    "100.106.97.34",
+    "orangepi6.humpback-krait.ts.net",
+    "localhost"
+  ],
+  "logger": {
+    "format": "json"
+  },
+  "db": {
+    "type": "badgerv2",
+    "dataSource": "/home/step/db"
+  },
   "crl": {
     "enabled": true,
     "generateOnRevoke": true,
@@ -17,34 +26,163 @@
     "claims": {
       "minTLSCertDuration": "5m",
       "defaultTLSCertDuration": "2160h",
-      "maxTLSCertDuration": "2160h",
+      "maxTLSCertDuration": "8760h",
       "disableRenewal": false,
       "allowRenewalAfterExpiry": false
     },
     "provisioners": [
+      {
+        "type": "JWK",
+        "name": "issuer-guest-short",
+        "key": "__ISSUER_JWK_PUBLIC__",
+        "encryptedKey": "__ISSUER_JWK_ENCRYPTED__",
+        "claims": {
+          "minTLSCertDuration": "5m",
+          "defaultTLSCertDuration": "48h",
+          "maxTLSCertDuration": "48h",
+          "disableRenewal": true
+        },
+        "options": {
+          "x509": {
+            "templateFile": "/home/step/templates/device-leaf.tpl",
+            "templateData": {
+              "AllowedTiers": [
+                "guest-short"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "type": "JWK",
+        "name": "issuer-guest-long",
+        "key": "__ISSUER_JWK_PUBLIC__",
+        "encryptedKey": "__ISSUER_JWK_ENCRYPTED__",
+        "claims": {
+          "minTLSCertDuration": "5m",
+          "defaultTLSCertDuration": "720h",
+          "maxTLSCertDuration": "720h",
+          "disableRenewal": true
+        },
+        "options": {
+          "x509": {
+            "templateFile": "/home/step/templates/device-leaf.tpl",
+            "templateData": {
+              "AllowedTiers": [
+                "guest-long"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "type": "JWK",
+        "name": "issuer-family",
+        "key": "__ISSUER_JWK_PUBLIC__",
+        "encryptedKey": "__ISSUER_JWK_ENCRYPTED__",
+        "claims": {
+          "minTLSCertDuration": "5m",
+          "defaultTLSCertDuration": "8760h",
+          "maxTLSCertDuration": "8760h",
+          "disableRenewal": true
+        },
+        "options": {
+          "x509": {
+            "templateFile": "/home/step/templates/device-leaf.tpl",
+            "templateData": {
+              "AllowedTiers": [
+                "media-only",
+                "low",
+                "medium",
+                "high"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "type": "JWK",
+        "name": "issuer-admin",
+        "key": "__ISSUER_JWK_PUBLIC__",
+        "encryptedKey": "__ISSUER_JWK_ENCRYPTED__",
+        "claims": {
+          "minTLSCertDuration": "5m",
+          "defaultTLSCertDuration": "2160h",
+          "maxTLSCertDuration": "2160h",
+          "disableRenewal": true
+        },
+        "options": {
+          "x509": {
+            "templateFile": "/home/step/templates/device-leaf.tpl",
+            "templateData": {
+              "AllowedTiers": [
+                "admin",
+                "owner"
+              ]
+            }
+          }
+        }
+      },
       {
         "type": "OIDC",
         "name": "authentik",
         "clientID": "__OIDC_CLIENT_ID__",
         "clientSecret": "__OIDC_CLIENT_SECRET__",
         "configurationEndpoint": "https://AUTHENTIK_HOST/application/o/step-ca/.well-known/openid-configuration",
-        "admins": ["nathan.smuckler@gmail.com"],
+        "admins": [
+          "nathan.smuckler@gmail.com"
+        ],
         "listenAddress": ":10000",
-        "claims": {"defaultTLSCertDuration": "2160h", "maxTLSCertDuration": "2160h", "disableRenewal": false}
+        "claims": {
+          "defaultTLSCertDuration": "2160h",
+          "maxTLSCertDuration": "2160h",
+          "disableRenewal": false
+        },
+        "options": {
+          "x509": {
+            "templateFile": "/home/step/templates/no-tier.tpl"
+          }
+        }
       },
       {
         "type": "ACME",
         "name": "yubikey-attest",
-        "challenges": ["device-attest-01"],
-        "attestationFormats": ["step"],
-        "claims": {"defaultTLSCertDuration": "2160h", "maxTLSCertDuration": "2160h", "disableRenewal": false}
+        "challenges": [
+          "device-attest-01"
+        ],
+        "attestationFormats": [
+          "step"
+        ],
+        "claims": {
+          "defaultTLSCertDuration": "2160h",
+          "maxTLSCertDuration": "2160h",
+          "disableRenewal": false
+        },
+        "options": {
+          "x509": {
+            "templateFile": "/home/step/templates/no-tier.tpl"
+          }
+        }
       },
       {
         "type": "ACME",
         "name": "apple-attest",
-        "challenges": ["device-attest-01"],
-        "attestationFormats": ["apple"],
-        "claims": {"defaultTLSCertDuration": "2160h", "maxTLSCertDuration": "2160h", "disableRenewal": false}
+        "challenges": [
+          "device-attest-01"
+        ],
+        "attestationFormats": [
+          "apple"
+        ],
+        "claims": {
+          "defaultTLSCertDuration": "2160h",
+          "maxTLSCertDuration": "2160h",
+          "disableRenewal": false
+        },
+        "options": {
+          "x509": {
+            "templateFile": "/home/step/templates/no-tier.tpl"
+          }
+        }
       },
       {
         "type": "SCEP",
@@ -54,7 +192,16 @@
         "minimumPublicKeyLength": 2048,
         "includeRoot": true,
         "encryptionAlgorithmIdentifier": 2,
-        "claims": {"defaultTLSCertDuration": "2160h", "maxTLSCertDuration": "2160h", "disableRenewal": false}
+        "claims": {
+          "defaultTLSCertDuration": "2160h",
+          "maxTLSCertDuration": "2160h",
+          "disableRenewal": false
+        },
+        "options": {
+          "x509": {
+            "templateFile": "/home/step/templates/no-tier.tpl"
+          }
+        }
       }
     ],
     "backdate": "1m0s"
