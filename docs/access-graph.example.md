@@ -14,7 +14,7 @@ flowchart LR
         p_home_assistant["home-assistant"]
     end
     subgraph people["People"]
-        u_nathan["nathan"]
+        u_nathan["nathan<br/>tier: owner"]
     end
     subgraph hwkeys["Hardware keys"]
         k_yk_backup["yk-backup<br/>home-safe"]
@@ -75,15 +75,21 @@ Solid blue = enforced; dashed = documented only (not enforced); grey = expired; 
 
 ## Principals
 
-| id | type | roles | expires | status |
-|---|---|---|---|---|
-| personal-dashboard | agent | backup-runner, worker-caller | 2027-01-31 | active |
-| playwright-billing | agent | billing-agent | - | active |
-| cvc-remind | machine | cvc-remind-publisher | - | active |
-| garage-temp | machine | sensor-publish | - | active |
-| home-assistant | machine | home-assistant | - | active |
-| nathan-iphone | device | worker-caller | - | active |
-| nathan-mac | device | worker-caller | - | active |
+| id | type | tier | roles | expires | status |
+|---|---|---|---|---|---|
+| personal-dashboard | agent | - | backup-runner, worker-caller | 2027-01-31 | active |
+| playwright-billing | agent | - | billing-agent | - | active |
+| cvc-remind | machine | - | cvc-remind-publisher | - | active |
+| garage-temp | machine | - | sensor-publish | - | active |
+| home-assistant | machine | - | home-assistant | - | active |
+| nathan-iphone | device | - | worker-caller | - | active |
+| nathan-mac | device | - | worker-caller | - | active |
+
+## People
+
+| id | tier | tailnet | ha | expires | granted by |
+|---|---|---|---|---|---|
+| nathan | owner | owner | none | - | - |
 
 ## Devices
 
