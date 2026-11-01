@@ -1,6 +1,8 @@
 # Access registry — single source of truth for "who may access what".
 # Copy to access/registry.yaml (gitignored) and edit. Validate with:
 #   cvc-access validate        cvc-access check
+# Generate the tier-gate config from the resources catalog:
+#   cvc-access build tiergate --out deploy/tiergate/config.yaml
 # Generate the broker ACL (manual step, then restart/reload the broker):
 #   cvc-access build broker-acl --out deploy/broker-acl.yaml
 #
@@ -77,6 +79,19 @@ machines:        # sensors/devices: one MQTT user each
 # (these edits rewrite the file: key order is kept, comments are not).
 people:
   nathan: {email: nathan@local, tier: owner, tailnet: owner}
+  sam: {email: sam@local, tier: medium, tailnet: family, granted_by: nathan}
+  visitor: {tier: guest-long, tailnet: long-guests, expires: 2026-12-31, granted_by: nathan}
+
+# ── Resource catalog: human-facing services behind the tier gate (cvc.tiergate) ──
+# kind: media | ha | dashboard | library | admin. min_tier: a people tier (see above).
+# host (or derived from url) must be unique. high/admin/owner imply a passkey (Authentik).
+# ha_level (view | limited-control) is only for kind ha and documents what HA grants.
+resources:
+  books: {name: Calibre library, url: "https://books.example.home", kind: library, min_tier: guest-long}
+  media: {name: Jellyfin, host: media.example.home, kind: media, min_tier: media-only}
+  ha: {name: Home Assistant, url: "https://ha.example.home", kind: ha, min_tier: medium, ha_level: limited-control}
+  dashboard: {name: Personal dashboard, host: dash.example.home, kind: dashboard, min_tier: high}
+  portainer: {name: Portainer, url: "https://portainer.example.home:9443", kind: admin, min_tier: admin}
 
 hardware_keys:   # YubiKeys: Vaultwarden FIDO2 2FA, PIV device certs, vault recovery (D11)
   yk-primary:

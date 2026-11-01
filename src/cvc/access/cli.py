@@ -7,7 +7,7 @@ from pathlib import Path
 
 import yaml
 
-from cvc.access import brokeracl, graph, mosquitto  # noqa: F401  (register builders)
+from cvc.access import brokeracl, catalog, graph, mosquitto  # noqa: F401  (register builders)
 from cvc.access.builders import BUILDERS
 from cvc.access.check import check_registry
 from cvc.access.edit import add_parsers as add_edit_parsers
