@@ -6,6 +6,7 @@ import re
 
 from cvc.access.builders import register_builder
 from cvc.access.catalog import can_reach
+from cvc.access.classify import effective, grant_labels
 from cvc.access.model import Registry
 
 SOON_DAYS = 30
@@ -77,6 +78,16 @@ def _edge_label(grants, kind: str) -> str:
     return "documented only"
 
 
+def _labels(data: str | None, action: str | None) -> str:
+    return f"{data or '?'}/{action or '?'}" if (data or action) else ""
+
+
+def _grant_labels(registry: Registry, grants) -> str:
+    seen = sorted({_labels(*grant_labels(registry, g)) for g in grants} - {""})
+    via = sorted({g.via for g in grants if g.via})
+    return ", ".join(seen) + (f" via {', '.join(via)}" if via else "")
+
+
 def _cell(text: str) -> str:
     return str(text).replace("|", "\\|").replace("\n", " ").replace("<", "&lt;").replace(">", "&gt;")
 
@@ -118,6 +129,10 @@ def build_graph(registry: Registry, today: dt.date | None = None) -> str:
                 cls("principal", nid)
             if getattr(p, "tier", None):
                 label += f"<br/>tier: {mermaid_label(p.tier)}"
+                if group is registry.agents:
+                    eff = effective(registry, p).row
+                    if eff and eff != p.tier:
+                        label += f" (effective {mermaid_label(eff)})"
             if not p.roles:
                 label += "<br/>(no roles)"
             lines.append(f'        {nid}["{label}"]')
@@ -190,6 +205,8 @@ def build_graph(registry: Registry, today: dt.date | None = None) -> str:
         s = registry.systems[sid]
         nid = ids.get("s", sid)
         label = f"{mermaid_label(sid)}<br/>{mermaid_label(s.kind)}"
+        if s.data or s.action:
+            label += f"<br/>{mermaid_label(_labels(s.data, s.action))}"
         if s.enforced:
             cls("enforced", nid)
             lines.append(f'        {nid}["{label}"]')
@@ -205,6 +222,10 @@ def build_graph(registry: Registry, today: dt.date | None = None) -> str:
         if d.cert and d.cert.storage == "yubikey-piv" and d.cert.hardware_key:
             arrow = "-->" if d.cert.status in ("pending", "active") else "-.->"
             lines.append(f"    {ids.get('p', did)} {arrow} {ids.get('k', d.cert.hardware_key)}")
+    for aid in sorted(registry.agents):
+        sp = registry.agents[aid].sponsor_id
+        if sp in registry.people:
+            lines.append(f'    {ids.get("u", sp)} -.->|"sponsors"| {ids.get("p", aid)}')
     for group in (registry.agents, registry.machines, registry.devices):
         for pid in sorted(group):
             for rid in sorted(group[pid].roles):
@@ -215,7 +236,10 @@ def build_graph(registry: Registry, today: dt.date | None = None) -> str:
             by_sys.setdefault(g.system, []).append(g)
         for sid in sorted(by_sys):
             s = registry.systems[sid]
-            label = mermaid_label(_edge_label(by_sys[sid], s.kind))
+            text = _edge_label(by_sys[sid], s.kind)
+            if lab := _grant_labels(registry, by_sys[sid]):
+                text += f" [{lab}]"
+            label = mermaid_label(text)
             arrow = "-->" if s.enforced else "-.->"
             lines.append(f'    {ids.get("r", rid)} {arrow}|"{label}"| {ids.get("s", sid)}')
 
@@ -227,17 +251,26 @@ def build_graph(registry: Registry, today: dt.date | None = None) -> str:
            f"Generated {today.isoformat()} by `cvc-access build graph` from the access registry.",
            "", "```mermaid", *lines, "```", "",
            ("Solid blue = enforced; dashed = documented only (not enforced); grey = expired; "
+            "data/action labels (D16) are shown on systems and in brackets on grant edges; "
+            "dotted 'sponsors' edges link a person to the agents they sponsor; "
            f"orange = expires within {SOON_DAYS} days; yellow dashed = unused role. "
            "Revoked certs and lost/revoked/retired hardware keys are grey. Cert serials and "
            "fingerprints are never shown."), "",
            "## Principals", "",
-           "| id | type | tier | roles | expires | status |", "|---|---|---|---|---|---|"]
+           "| id | type | tier | sponsor | roles | expires | status |",
+           "|---|---|---|---|---|---|---|"]
     for sect, group in (("agent", registry.agents), ("machine", registry.machines),
                         ("device", registry.devices)):
         for pid in sorted(group):
             p = group[pid]
-            tier = _cell(getattr(p, "tier", None) or "-")
-            out.append(f"| {_cell(pid)} | {sect} | {tier} | "
+            tier = getattr(p, "tier", None) or "-"
+            sponsor = "-"
+            if sect == "agent":
+                sponsor = p.sponsor_id or "-"
+                eff = effective(registry, p).row
+                if eff and eff != p.tier:
+                    tier += f" (effective {eff})"
+            out.append(f"| {_cell(pid)} | {sect} | {_cell(tier)} | {_cell(sponsor)} | "
                        f"{_cell(', '.join(sorted(p.roles)) or '-')} | "
                        f"{p.expires.isoformat() if p.expires else '-'} | {status(p)} |")
     if registry.people:
@@ -298,8 +331,10 @@ def build_graph(registry: Registry, today: dt.date | None = None) -> str:
                 if u.expires is not None and today > u.expires:
                     tier += " (expired)"
                 out.append(f"| {_cell(uid)} | {_cell(tier)} | " + " | ".join(cells) + " |")
-    out += ["", "## Systems", "", "| id | kind | enforced |", "|---|---|---|"]
+    out += ["", "## Systems", "", "| id | kind | data | action | enforced |",
+            "|---|---|---|---|---|"]
     for sid in sorted(registry.systems):
         s = registry.systems[sid]
-        out.append(f"| {_cell(sid)} | {_cell(s.kind)} | {'yes' if s.enforced else 'no'} |")
+        out.append(f"| {_cell(sid)} | {_cell(s.kind)} | {_cell(s.data or '-')} | "
+                   f"{_cell(s.action or '-')} | {'yes' if s.enforced else 'no'} |")
     return "\n".join(out) + "\n"
