@@ -25,6 +25,11 @@ Rules enforced:
 - `purposes: ["*"]` -> any purpose allowed.
 - Purpose list present and request purpose not in it -> deny.
 Nothing is allowed implicitly.
+
+Agent-tier fields (optional, see tiers.py):
+    tier: scoped | assistant | high     # absent/unknown -> scoped
+    on_behalf_of: "nathan"              # required for tier assistant (dual attribution)
+    allow entries may set `physical: true` — for tier high such requests need human approval.
 """
 from __future__ import annotations
 
@@ -34,6 +39,8 @@ import re
 from dataclasses import dataclass
 
 import yaml
+
+from .tiers import normalize_tier
 
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
@@ -108,3 +115,25 @@ class Acl:
                 return Decision(True, "explicit allow")
             return Decision(False, f"purpose '{purpose}' not permitted for {credential}")
         return Decision(False, f"no allow entry for credential '{credential}'")
+
+    def tier(self, agent_id: str) -> str:
+        """Agent tier from the ACL; absent or unrecognised -> 'scoped'."""
+        agent = self._agents.get(agent_id) or {}
+        return normalize_tier(agent.get("tier"))
+
+    def on_behalf_of(self, agent_id: str) -> str | None:
+        agent = self._agents.get(agent_id) or {}
+        v = str(agent.get("on_behalf_of") or "").strip()
+        return v or None
+
+    def is_physical(self, agent_id: str, credential: str) -> bool:
+        agent = self._agents.get(agent_id) or {}
+        credential = credential.lower()
+        for entry in agent.get("allow", []) or []:
+            if (entry.get("credential") or "").lower() == credential:
+                return bool(entry.get("physical"))
+        return False
+
+    def allowed_credentials(self, agent_id: str) -> set[str]:
+        agent = self._agents.get(agent_id) or {}
+        return {(e.get("credential") or "").lower() for e in agent.get("allow", []) or []}

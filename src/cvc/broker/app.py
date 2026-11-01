@@ -13,6 +13,8 @@ the environment (unlock managed externally — see broker-deployment.yaml).
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging as _logging
 import os
@@ -33,6 +35,7 @@ from ..vault.client import BwClient, VaultError, _run, _session
 from .acl import Acl
 from .audit import AuditEvent, AuditLog
 from .ops_log import OpsLog
+from .tiers import ApprovalStore, SessionStore, SessionToken
 
 _log = _logging.getLogger(__name__)
 
@@ -125,6 +128,42 @@ def _ops() -> OpsLog:
     return OpsLog(_cfg().ops_log)
 
 
+_SESSIONS = SessionStore()
+_APPROVALS = ApprovalStore()
+
+
+def _sessions() -> SessionStore:
+    return _SESSIONS
+
+
+def _approvals() -> ApprovalStore:
+    return _APPROVALS
+
+
+# sha256 of the human approver's token. Unset -> approvals cannot be granted (fail-closed).
+_APPROVER_ENV = "CVC_APPROVER_TOKEN_SHA256"
+
+
+def _bearer(authorization: str) -> str:
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=400, detail="Authorization header must use Bearer scheme")
+    return authorization.removeprefix("Bearer ").strip()
+
+
+def _authn(acl: Acl, sessions: SessionStore, agent: str, token: str
+           ) -> tuple[bool, SessionToken | None]:
+    """Accept either the long-lived service token or an unexpired session token."""
+    if acl.authenticate(agent, token):
+        return True, None
+    rec = sessions.resolve(agent, token)
+    return (rec is not None), rec
+
+
+def _obo(acl: Acl, agent: str) -> str | None:
+    """Dual-attribution value for audit records (assistant tier only)."""
+    return acl.on_behalf_of(agent) if acl.tier(agent) == "assistant" else None
+
+
 # ── models ───────────────────────────────────────────────────────────────────
 _MAX_FIELD = 256
 
@@ -143,6 +182,22 @@ class FetchResponse(BaseModel):
     credential: str
     field: str
     value: str
+
+
+class IssueRequest(BaseModel):
+    credentials: list[str] = Field(..., max_length=32,
+                                   description="Credentials the session token is scoped to.")
+    ttl: int | None = Field(None, ge=1, description="Requested TTL (capped by tier).")
+
+
+class ApprovalRequest(BaseModel):
+    credential: str = Field(..., max_length=_MAX_FIELD)
+    purpose: str = Field(..., max_length=_MAX_FIELD)
+
+
+class ApproveRequest(BaseModel):
+    approver: str = Field(..., min_length=1, max_length=64,
+                          description="Human approver name (recorded).")
 
 
 class TriggerRequest(BaseModel):
@@ -320,12 +375,11 @@ def audit_verify(
     x_agent_id: str = Header(..., max_length=64, description="Calling agent's id."),
     authorization: str = Header(..., description="Bearer <agent service token>."),
     acl: Acl = Depends(_acl),  # noqa: B008 - FastAPI dependency-injection idiom
+    sessions: SessionStore = Depends(_sessions),  # noqa: B008
 ) -> dict:
     """Recompute the audit hash chain; `intact: false` means the log was altered/truncated."""
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=400, detail="Authorization header must use Bearer scheme")
-    token = authorization.removeprefix("Bearer ").strip()
-    if not acl.authenticate(x_agent_id, token):
+    token = _bearer(authorization)
+    if not _authn(acl, sessions, x_agent_id, token)[0]:
         raise HTTPException(status_code=401, detail="authentication failed")
     return {"intact": _audit().verify()}
 
@@ -339,27 +393,43 @@ def fetch_credential(
     acl: Acl = Depends(_acl),  # noqa: B008 - FastAPI dependency-injection idiom
     audit: AuditLog = Depends(_audit),  # noqa: B008 - FastAPI dependency-injection idiom
     bw: BwClient = Depends(_bw),  # noqa: B008 - FastAPI dependency-injection idiom
+    sessions: SessionStore = Depends(_sessions),  # noqa: B008
+    approvals: ApprovalStore = Depends(_approvals),  # noqa: B008
+    x_approval_id: str | None = Header(None, max_length=64,
+                                       description="Approved approval id (tier high, physical)."),
 ) -> JSONResponse:
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=400, detail="Authorization header must use Bearer scheme")
-    token = authorization.removeprefix("Bearer ").strip()
+    token = _bearer(authorization)
+    obo = _obo(acl, x_agent_id)
 
-    # 1. Authenticate.
-    if not acl.authenticate(x_agent_id, token):
+    def _deny(status: int, reason: str, outcome: str | None = None):
         audit.record(AuditEvent(agent=x_agent_id, credential=req.credential,
-                                purpose=req.purpose, outcome="deny:auth"))
-        raise HTTPException(status_code=401, detail="authentication failed")
+                                purpose=req.purpose, outcome=outcome or f"deny:{reason}",
+                                on_behalf_of=obo))
+        raise HTTPException(status_code=status, detail=reason)
+
+    # 1. Authenticate (service token or short-lived session token).
+    ok, session = _authn(acl, sessions, x_agent_id, token)
+    if not ok:
+        _deny(401, "authentication failed", "deny:auth")
+    if session is not None and req.credential.lower() not in session.scope:
+        _deny(403, "credential outside session token scope")
 
     # 2. Authorize (default-deny).
     decision = acl.authorize(x_agent_id, req.credential, req.purpose)
     if not decision.allowed:
-        audit.record(AuditEvent(agent=x_agent_id, credential=req.credential,
-                                purpose=req.purpose, outcome=f"deny:{decision.reason}"))
-        raise HTTPException(status_code=403, detail=decision.reason)
+        _deny(403, decision.reason)
+
+    # 2b. Tier enforcement.
+    tier = acl.tier(x_agent_id)
+    if tier == "assistant" and not obo:
+        _deny(403, "assistant tier requires on_behalf_of in ACL")
+    if (tier == "high" and acl.is_physical(x_agent_id, req.credential)
+            and not approvals.consume(x_approval_id, x_agent_id, req.credential, req.purpose)):
+        _deny(403, "physical action requires human approval")
 
     # 3. Audit the grant BEFORE any secret leaves the system.
     audit.record(AuditEvent(agent=x_agent_id, credential=req.credential,
-                            purpose=req.purpose, outcome="allow"))
+                            purpose=req.purpose, outcome="allow", on_behalf_of=obo))
 
     # 4. Retrieve the requested field from the vault.
     try:
@@ -396,6 +466,7 @@ def trigger_backup(
     acl: Acl = Depends(_acl),  # noqa: B008 - FastAPI dependency-injection idiom
     audit: AuditLog = Depends(_audit),  # noqa: B008 - FastAPI dependency-injection idiom
     cfg: config.Config = Depends(_cfg),  # noqa: B008 - FastAPI dependency-injection idiom
+    sessions: SessionStore = Depends(_sessions),  # noqa: B008
 ) -> JSONResponse:
     """On-demand equivalent of the cvc-backup CronJob (D9).
 
@@ -411,36 +482,45 @@ def trigger_backup(
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=400, detail="Authorization header must use Bearer scheme")
     token = authorization.removeprefix("Bearer ").strip()
+    obo = _obo(acl, x_agent_id)
 
     # 1. Authenticate.
-    if not acl.authenticate(x_agent_id, token):
+    ok, session = _authn(acl, sessions, x_agent_id, token)
+    if ok and session is not None and _BACKUP_CAPABILITY not in session.scope:
+        ok = False
+    if not ok:
         audit.record(AuditEvent(agent=x_agent_id, credential=_BACKUP_CAPABILITY,
-                                purpose=req.purpose, outcome="deny:auth"))
+                                purpose=req.purpose, outcome="deny:auth", on_behalf_of=obo))
         raise HTTPException(status_code=401, detail="authentication failed")
 
     # 2. Authorize (default-deny) — the "backup" capability, not a vault item.
     decision = acl.authorize(x_agent_id, _BACKUP_CAPABILITY, req.purpose)
     if not decision.allowed:
         audit.record(AuditEvent(agent=x_agent_id, credential=_BACKUP_CAPABILITY,
-                                purpose=req.purpose, outcome=f"deny:{decision.reason}"))
+                                purpose=req.purpose, outcome=f"deny:{decision.reason}",
+                                on_behalf_of=obo))
         raise HTTPException(status_code=403, detail=decision.reason)
+    if acl.tier(x_agent_id) == "assistant" and not obo:
+        audit.record(AuditEvent(agent=x_agent_id, credential=_BACKUP_CAPABILITY,
+                                purpose=req.purpose, outcome="deny:no on_behalf_of"))
+        raise HTTPException(status_code=403, detail="assistant tier requires on_behalf_of in ACL")
 
     # 2b. Single-flight: refuse (and audit) a concurrent run instead of queueing workers.
     if not _backup_lock.acquire(blocking=False):
         audit.record(AuditEvent(agent=x_agent_id, credential=_BACKUP_CAPABILITY,
-                                purpose=req.purpose, outcome="deny:busy"))
+                                purpose=req.purpose, outcome="deny:busy", on_behalf_of=obo))
         raise HTTPException(status_code=409, detail="a backup is already in progress")
     try:
-        return _run_backup(req, x_agent_id, audit, cfg)
+        return _run_backup(req, x_agent_id, audit, cfg, obo)
     finally:
         _backup_lock.release()
 
 
 def _run_backup(req: TriggerRequest, x_agent_id: str, audit: AuditLog,
-                cfg: config.Config) -> JSONResponse:
+                cfg: config.Config, obo: str | None = None) -> JSONResponse:
     # 3. Audit the grant BEFORE the vault is touched, same invariant as a credential fetch.
     audit.record(AuditEvent(agent=x_agent_id, credential=_BACKUP_CAPABILITY,
-                            purpose=req.purpose, outcome="allow"))
+                            purpose=req.purpose, outcome="allow", on_behalf_of=obo))
 
     # 4. Run the pipeline out-of-process. Deliberately NOT inline: `bw export` is a
     #    multi-minute blocking syscall that would stall the event loop, and a separate
@@ -489,6 +569,99 @@ def _run_backup(req: TriggerRequest, x_agent_id: str, audit: AuditLog,
         },
         headers={"Cache-Control": "no-store"},
     )
+
+
+@app.post("/v1/tokens/issue", tags=["credentials"],
+          summary="Exchange the service token for a short-lived, scoped session token")
+def issue_token(
+    req: IssueRequest,
+    x_agent_id: str = Header(..., max_length=64),
+    authorization: str = Header(...),
+    acl: Acl = Depends(_acl),  # noqa: B008
+    sessions: SessionStore = Depends(_sessions),  # noqa: B008
+) -> JSONResponse:
+    """Only the long-lived service token may mint; session tokens cannot re-mint.
+    Scope must be a non-empty subset of the agent's ACL allow entries. TTL is capped by tier
+    (never above 15 minutes). The token plaintext is returned once and never logged."""
+    token = _bearer(authorization)
+    if not acl.authenticate(x_agent_id, token):
+        raise HTTPException(status_code=401, detail="authentication failed")
+    scope = [c.lower() for c in req.credentials]
+    if not scope or not set(scope) <= acl.allowed_credentials(x_agent_id):
+        raise HTTPException(status_code=403, detail="requested scope exceeds ACL")
+    tier = acl.tier(x_agent_id)
+    session_token, rec = sessions.issue(x_agent_id, tier, scope, req.ttl)
+    ttl = max(0, round(rec.expires - time.time()))
+    _ops().record("session_issued", agent=x_agent_id, tier=tier, ttl=ttl, scope_size=len(scope))
+    return JSONResponse(
+        content={"token": session_token, "tier": tier, "expires_in": ttl,
+                 "scope": sorted(rec.scope)},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/v1/approvals", tags=["credentials"],
+          summary="Create a pending human-approval record (tier high, physical actions)")
+def create_approval(
+    req: ApprovalRequest,
+    x_agent_id: str = Header(..., max_length=64),
+    authorization: str = Header(...),
+    acl: Acl = Depends(_acl),  # noqa: B008
+    audit: AuditLog = Depends(_audit),  # noqa: B008
+    sessions: SessionStore = Depends(_sessions),  # noqa: B008
+    approvals: ApprovalStore = Depends(_approvals),  # noqa: B008
+) -> JSONResponse:
+    token = _bearer(authorization)
+    if not _authn(acl, sessions, x_agent_id, token)[0]:
+        raise HTTPException(status_code=401, detail="authentication failed")
+    if not acl.authorize(x_agent_id, req.credential, req.purpose).allowed:
+        raise HTTPException(status_code=403, detail="not permitted by ACL")
+    a = approvals.create(x_agent_id, req.credential, req.purpose)
+    audit.record(AuditEvent(agent=x_agent_id, credential=req.credential, purpose=req.purpose,
+                            outcome=f"approval:requested:{a.id}",
+                            on_behalf_of=_obo(acl, x_agent_id)))
+    return JSONResponse(status_code=201, content={"id": a.id, "status": a.status})
+
+
+@app.get("/v1/approvals/{approval_id}", tags=["credentials"], summary="Approval status")
+def get_approval(
+    approval_id: str,
+    x_agent_id: str = Header(..., max_length=64),
+    authorization: str = Header(...),
+    acl: Acl = Depends(_acl),  # noqa: B008
+    sessions: SessionStore = Depends(_sessions),  # noqa: B008
+    approvals: ApprovalStore = Depends(_approvals),  # noqa: B008
+) -> dict:
+    token = _bearer(authorization)
+    if not _authn(acl, sessions, x_agent_id, token)[0]:
+        raise HTTPException(status_code=401, detail="authentication failed")
+    a = approvals.get(approval_id)
+    if a is None or a.agent != x_agent_id:
+        raise HTTPException(status_code=404, detail="no such approval")
+    return {"id": a.id, "status": a.status, "credential": a.credential, "purpose": a.purpose}
+
+
+@app.post("/v1/approvals/{approval_id}/approve", tags=["credentials"],
+          summary="Human approves a pending approval record")
+def approve(
+    approval_id: str,
+    req: ApproveRequest,
+    x_approver_token: str = Header(..., description="Human approver token."),
+    audit: AuditLog = Depends(_audit),  # noqa: B008
+    approvals: ApprovalStore = Depends(_approvals),  # noqa: B008
+) -> dict:
+    expected = os.environ.get(_APPROVER_ENV, "").strip().lower()
+    if not expected:
+        raise HTTPException(status_code=503, detail="approvals not configured")
+    got = hashlib.sha256(x_approver_token.encode("utf-8")).hexdigest()
+    if not hmac.compare_digest(expected, got):
+        raise HTTPException(status_code=401, detail="approver authentication failed")
+    a = approvals.approve(approval_id, req.approver)
+    if a is None:
+        raise HTTPException(status_code=409, detail="approval not pending")
+    audit.record(AuditEvent(agent=a.agent, credential=a.credential, purpose=a.purpose,
+                            outcome=f"approval:granted:{a.id}:by:{req.approver}"))
+    return {"id": a.id, "status": a.status}
 
 
 def main() -> None:
