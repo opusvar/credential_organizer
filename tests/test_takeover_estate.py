@@ -170,3 +170,82 @@ def test_estate_kit_not_consumed_when_start_fails(env):
     with pytest.raises(TakeoverError, match="180-day wait"):
         _estate_wizard(env, kit)
     assert kit.active()
+
+
+# ── printable sheet / QR ────────────────────────────────────────────────────
+def test_uri_round_trip_and_typed_forms():
+    from cvc.takeover.estate_sheet import build_uri, parse_code
+    code = "ABCDE-FGHJK-MNPQR-STVWX-YZ012-34567"
+    uri = build_uri(code)
+    assert uri == "cvc-estate:v1:ABCDEFGHJKMNPQRSTVWXYZ01234567"
+    assert parse_code(uri) == parse_code(code.lower().replace("-", " ")) == uri.split(":")[2]
+    with pytest.raises(TakeoverError, match="unsupported"):
+        parse_code("cvc-estate:v2:ABC")
+    with pytest.raises(TakeoverError, match="malformed"):
+        parse_code("cvc-estate:https://x")
+
+
+def test_scanned_uri_accepted_by_verify(env):
+    from cvc.takeover.estate_sheet import build_uri
+    kit, box = _kit(env)
+    box["code"] = build_uri(kit.generate("nathan", "2026-11-01"))
+    assert kit.verify()
+
+
+def test_sheet_pdf_0600_no_code_in_state_or_logs(env, tmp_path, capsys, caplog):
+    segno = pytest.importorskip("segno")
+    from cvc.takeover.estate_sheet import build_uri, generate_and_emit, qr_matrix
+    kit, _ = _kit(env)
+    outdir = tmp_path / "print"
+    outdir.mkdir()
+    lines = []
+    kit_id, path = generate_and_emit(kit, "nathan", "2026-11-01T00:00:00", outdir,
+                                     out=lines.append)
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600 and path.parent == outdir
+    pdf = path.read_bytes()
+    assert pdf.startswith(b"%PDF-1.4") and pdf.rstrip().endswith(b"%%EOF")
+    assert b"DO NOT PHOTOGRAPH" in pdf and f"Kit id {kit_id}".encode() in pdf
+    assert b"cvc takeover start --estate-kit" in pdf
+    code_line = next(x for x in pdf.split(b"\n") if b"(Code:" in x)
+    groups = code_line.split(b"(Code:")[1].split(b")")[0].split()
+    assert len(groups) == 6 and all(len(g) == 5 for g in groups)
+    code = b"".join(groups).decode()
+    # QR payload round-trip: the drawn matrix is exactly the QR of the v1 URI
+    assert qr_matrix(build_uri(code)) == [list(r) for r in
+                                          segno.make(build_uri(code), error="m").matrix]
+    assert kit_id == kit.status()["kit_id"] and kit_id not in code
+    state_text = "".join(p.read_text() for p in env.store.dir.glob("*") if p.is_file())
+    assert code not in state_text
+    assert all(code not in x for x in lines) and code not in capsys.readouterr().out
+    assert code not in caplog.text
+    assert any("shred -u" in x for x in lines)
+    env.reader.serial = "111"
+    from cvc.takeover.estate_sheet import write_sheet
+    with pytest.raises(TakeoverError, match="state dir"):
+        write_sheet(env.store.dir / "x.pdf", code, kit_id, "2026-11-01", env.store.dir)
+
+
+def test_terminal_mode(env):
+    pytest.importorskip("segno")
+    from cvc.takeover.estate_sheet import generate_and_emit
+    kit, _ = _kit(env)
+    lines = []
+    _, path = generate_and_emit(kit, "nathan", "2026-11-01", terminal=True, out=lines.append)
+    assert path is None and "█" in lines[0] and "LEGACY RECOVERY CODE" in lines[1]
+
+
+def test_missing_qr_lib_message(env, monkeypatch, tmp_path):
+    import builtins
+
+    from cvc.takeover.estate_sheet import generate_and_emit
+    real = builtins.__import__
+
+    def fake(name, *a, **k):
+        if name == "segno":
+            raise ImportError(name)
+        return real(name, *a, **k)
+    monkeypatch.setattr(builtins, "__import__", fake)
+    kit, _ = _kit(env)
+    with pytest.raises(TakeoverError, match=r"pip install 'cvc\[estate\]'"):
+        generate_and_emit(kit, "nathan", "2026-11-01", tmp_path)
+    assert not kit.active()                      # no kit created that nobody can print

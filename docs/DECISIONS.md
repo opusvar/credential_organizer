@@ -354,6 +354,16 @@ hash-chained `history.jsonl` (`cvc takeover verify-history`).
     used, and a new kit must be generated and printed. A failed attempt does not use it up.
   - It is never auto-replaced, so whoever used it does not get a fresh code.
   - `estate_kit.json` belongs in the identity backup too.
+  - **Printable sheet.** `generate` writes a one-page PDF with mode 0600 (`--out`; the default
+    is the current dir, and the state dir is refused). With `--terminal` it shows a text QR
+    instead. The sheet carries a QR code of `cvc-estate:v1:<code>`, the code in 6 groups of 5,
+    and plain-language instructions for whoever opens the box, plus the generated date and the
+    kit id. The kit id is a prefix of the scrypt hash, not the code.
+  - Everything is made offline: `segno`, from the optional extra `cvc[estate]`, plus a
+    built-in minimal PDF writer. If `segno` is missing, the command stops with an install hint
+    before any kit is created. After writing the file it prints a reminder to print it and
+    then `shred -u` it.
+  - `start --estate-kit` accepts the typed code or the scanned URI.
 
 ## D16 — Access classification matrix  **[DECIDED 2026-11-01]**
 Two axes (data public/internal/private/secret × action read/relay/write/act/delegate), tier ceilings (scoped/low/medium/high/assistant), effective = min(agent, sponsor) ∩ role grants, secret only via broker single-use approved fetch; guest/family are sponsors, not tiers. See [ACCESS-CLASSIFICATION.md](ACCESS-CLASSIFICATION.md).

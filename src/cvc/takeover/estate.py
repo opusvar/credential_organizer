@@ -68,9 +68,10 @@ class EstateKitStore:
         raw = "".join(secrets.choice(ALPHABET) for _ in range(SYMBOLS))
         salt = secrets.token_bytes(16)
         prev = self._load()
+        digest = _hash(raw.encode(), salt).hex()
         self._write({"alg": "scrypt", "n": N, "r": R, "p": P, "salt": salt.hex(),
-                     "hash": _hash(raw.encode(), salt).hex(), "status": "active",
-                     "kit_id": secrets.token_hex(4), "generated_at": when, "generated_by": by,
+                     "hash": digest, "status": "active",
+                     "kit_id": digest[:8], "generated_at": when, "generated_by": by,
                      "replaces": prev.get("kit_id")})
         return format_code(raw)
 
@@ -79,7 +80,9 @@ class EstateKitStore:
         if rec.get("status") != "active":
             raise TakeoverError("refused: no active estate recovery kit (it was never generated, "
                                 "or it was already used; generate and print a new one)")
-        code = normalize(self.ask("Estate recovery kit code: ")).encode()
+        from cvc.takeover.estate_sheet import parse_code  # typed code or scanned URI
+        code = parse_code(self.ask("Estate recovery kit code (type it, or scan the QR): ")
+                          ).encode()
         try:
             got = _hash(code, bytes.fromhex(rec["salt"]), rec["n"], rec["r"], rec["p"])
         finally:

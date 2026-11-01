@@ -18,6 +18,7 @@ import httpx
 from cvc.takeover import flow
 from cvc.takeover.api import faq_text
 from cvc.takeover.estate import EstateKitStore
+from cvc.takeover.estate_sheet import generate_and_emit
 from cvc.takeover.model import DEFAULT_STATE_DIR, TakeoverError, TakeoverStore, utcnow
 from cvc.takeover.recovery import RecoveryPasswordStore
 from cvc.takeover.verifiers import (
@@ -115,13 +116,7 @@ def _estate_kit(a: argparse.Namespace, d: flow.Deps) -> None:
     input(f"insert {a.owner}'s YubiKey and press Enter ")
     verify_owner_key(d.reader.read(), flow.load_registry(d.registry_path), a.owner)
     rotating = kit.active()
-    code = kit.generate(a.owner, utcnow().isoformat())
-    print("ESTATE RECOVERY KIT - print this page ONCE, then clear the screen.")
-    print("Store the paper in the safety deposit box. It is shown only now; only a hash is kept.")
-    print("Using it starts a 180-day takeover of any owner, notifies every owner, and voids it.")
-    print()
-    print(f"    {code}")
-    print()
+    generate_and_emit(kit, a.owner, utcnow().isoformat(), a.out or ".", a.terminal)
     if rotating:
         print("The previous kit is now void; destroy the old paper.")
     flow.notify_owners(d, "estate-kit-generated",
@@ -155,6 +150,10 @@ def main(argv: list[str] | None = None) -> int:
     e = sub.add_parser("estate-kit", help="printed estate recovery kit (D15 addendum)")
     e.add_argument("action", choices=("generate", "status"))
     e.add_argument("--owner", help="owner generating the kit (their YubiKey is required)")
+    e.add_argument("--out", help="PDF sheet path or directory (default: current dir; never the "
+                   "state dir)")
+    e.add_argument("--terminal", action="store_true",
+                   help="show the QR + instructions in the terminal instead of writing a file")
     for name in ("cancel", "view", "reconcile"):
         sub.add_parser(name).add_argument("id")
     st = sub.add_parser("status", help="one record (id) or initiator status indicator")
