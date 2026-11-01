@@ -34,7 +34,7 @@ Takeover (D15) cannot transfer provider accounts. It revokes cvc's tokens and li
 
 Google/Microsoft sign-in may optionally be added to Authentik as a password replacement only. On its own it never grants above `low`.
 
-## Pending Nathan
+## Pending owner decision
 
 - Personal accounts vs Workspace/M365.
 - Which provider first (recommendation: Google first).
