@@ -1,0 +1,20 @@
+name: licenses
+# License policy gate (docs/LICENSING.md). Offline: reads installed package metadata only.
+on:
+  push:
+  pull_request:
+
+jobs:
+  licenses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install (runtime + all extras)
+        run: python -m pip install -e '.[dev,estate]'
+      - name: Policy check
+        run: python scripts/license_inventory.py --check
+      - name: Tests
+        run: pytest -q tests/test_licenses.py

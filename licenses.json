@@ -1,0 +1,436 @@
+{
+  "packages": [
+    {
+      "name": "annotated-doc",
+      "version": "0.0.5",
+      "license": "MIT",
+      "classifier": "",
+      "homepage": "https://github.com/fastapi/annotated-doc",
+      "scope": "runtime",
+      "direct": false,
+      "verdict": "allow"
+    },
+    {
+      "name": "annotated-types",
+      "version": "0.8.0",
+      "license": "MIT",
+      "classifier": "MIT License",
+      "homepage": "https://github.com/annotated-types/annotated-types",
+      "scope": "runtime",
+      "direct": false,
+      "verdict": "allow"
+    },
+    {
+      "name": "anyio",
+      "version": "4.15.1",
+      "license": "MIT",
+      "classifier": "",
+      "homepage": "https://anyio.readthedocs.io/en/latest/",
+      "scope": "runtime",
+      "direct": false,
+      "verdict": "allow"
+    },
+    {
+      "name": "certifi",
+      "version": "2026.7.22",
+      "license": "MPL-2.0",
+      "classifier": "Mozilla Public License 2.0 (MPL 2.0)",
+      "homepage": "https://github.com/certifi/python-certifi",
+      "scope": "runtime",
+      "direct": false,
+      "verdict": "allow"
+    },
+    {
+      "name": "cffi",
+      "version": "2.1.1",
+      "license": "MIT-0",
+      "classifier": "",
+      "homepage": "https://cffi.readthedocs.io/",
+      "scope": "runtime",
+      "direct": false,
+      "verdict": "allow"
+    },
+    {
+      "name": "click",
+      "version": "8.5.0",
+      "license": "BSD-3-Clause",
+      "classifier": "",
+      "homepage": "https://github.com/pallets/click/",
+      "scope": "runtime",
+      "direct": false,
+      "verdict": "allow"
+    },
+    {
+      "name": "cryptography",
+      "version": "50.0.2",
+      "license": "Apache-2.0 OR BSD-3-Clause",
+      "classifier": "",
+      "homepage": "https://github.com/pyca/cryptography",
+      "scope": "runtime",
+      "direct": true,
+      "verdict": "allow"
+    },
+    {
+      "name": "fastapi",
+      "version": "0.141.1",
+      "license": "MIT",
+      "classifier": "",
+      "homepage": "https://github.com/fastapi/fastapi",
+      "scope": "runtime",
+      "direct": true,
+      "verdict": "allow"
+    },
+    {
+      "name": "h11",
+      "version": "0.16.0",
+      "license": "MIT",
+      "classifier": "MIT License",
+      "homepage": "https://github.com/python-hyper/h11",
+      "scope": "runtime",
+      "direct": false,
+      "verdict": "allow"
+    },
+    {
+      "name": "httpcore",
+      "version": "1.0.9",
+      "license": "BSD-3-Clause",
+      "classifier": "BSD License",
+      "homepage": "https://www.encode.io/httpcore/",
+      "scope": "runtime",
+      "direct": false,
+      "verdict": "allow"
+    },
+    {
+      "name": "httpx",
+      "version": "0.28.1",
+      "license": "BSD-3-Clause",
+      "classifier": "BSD License",
+      "homepage": "https://github.com/encode/httpx",
+      "scope": "runtime",
+      "direct": true,
+      "verdict": "allow"
+    },
+    {
+      "name": "idna",
+      "version": "3.18",
+      "license": "BSD-3-Clause",
+      "classifier": "",
+      "homepage": "https://github.com/kjd/idna",
+      "scope": "runtime",
+      "direct": false,
+      "verdict": "allow"
+    },
+    {
+      "name": "paho-mqtt",
+      "version": "2.1.0",
+      "license": "EPL-2.0 OR BSD-3-Clause",
+      "classifier": "",
+      "homepage": "http://eclipse.org/paho",
+      "scope": "runtime",
+      "direct": true,
+      "verdict": "allow"
+    },
+    {
+      "name": "pycparser",
+      "version": "3.12",
+      "license": "BSD-3-Clause",
+      "classifier": "",
+      "homepage": "https://github.com/eliben/pycparser",
+      "scope": "runtime",
+      "direct": false,
+      "verdict": "allow"
+    },
+    {
+      "name": "pydantic",
+      "version": "2.13.5",
+      "license": "MIT",
+      "classifier": "",
+      "homepage": "https://github.com/pydantic/pydantic",
+      "scope": "runtime",
+      "direct": true,
+      "verdict": "allow"
+    },
+    {
+      "name": "pydantic-core",
+      "version": "2.46.5",
+      "license": "MIT",
+      "classifier": "",
+      "homepage": "https://github.com/pydantic/pydantic",
+      "scope": "runtime",
+      "direct": false,
+      "verdict": "allow"
+    },
+    {
+      "name": "pyyaml",
+      "version": "6.0.3",
+      "license": "MIT",
+      "classifier": "MIT License",
+      "homepage": "https://pyyaml.org/",
+      "scope": "runtime",
+      "direct": true,
+      "verdict": "allow"
+    },
+    {
+      "name": "starlette",
+      "version": "1.6.0",
+      "license": "BSD-3-Clause",
+      "classifier": "",
+      "homepage": "https://github.com/Kludex/starlette",
+      "scope": "runtime",
+      "direct": false,
+      "verdict": "allow"
+    },
+    {
+      "name": "typing-extensions",
+      "version": "4.16.0",
+      "license": "PSF-2.0",
+      "classifier": "",
+      "homepage": "https://github.com/python/typing_extensions",
+      "scope": "runtime",
+      "direct": false,
+      "verdict": "allow"
+    },
+    {
+      "name": "typing-inspection",
+      "version": "0.4.4",
+      "license": "MIT",
+      "classifier": "",
+      "homepage": "https://github.com/pydantic/typing-inspection",
+      "scope": "runtime",
+      "direct": false,
+      "verdict": "allow"
+    },
+    {
+      "name": "uvicorn",
+      "version": "0.52.4",
+      "license": "BSD-3-Clause",
+      "classifier": "",
+      "homepage": "https://uvicorn.dev/",
+      "scope": "runtime",
+      "direct": true,
+      "verdict": "allow"
+    },
+    {
+      "name": "segno",
+      "version": "1.6.1",
+      "license": "BSD License",
+      "classifier": "BSD License",
+      "homepage": "https://github.com/heuer/segno/",
+      "scope": "optional:estate",
+      "direct": true,
+      "verdict": "allow"
+    },
+    {
+      "name": "ast-serialize",
+      "version": "0.11.0",
+      "license": "MIT",
+      "classifier": "",
+      "homepage": "https://github.com/mypyc/ast_serialize",
+      "scope": "dev",
+      "direct": false,
+      "verdict": "allow"
+    },
+    {
+      "name": "coverage",
+      "version": "7.16.0",
+      "license": "Apache-2.0",
+      "classifier": "",
+      "homepage": "https://github.com/coveragepy/coveragepy",
+      "scope": "dev",
+      "direct": false,
+      "verdict": "allow"
+    },
+    {
+      "name": "iniconfig",
+      "version": "2.3.0",
+      "license": "MIT",
+      "classifier": "",
+      "homepage": "https://github.com/pytest-dev/iniconfig",
+      "scope": "dev",
+      "direct": false,
+      "verdict": "allow"
+    },
+    {
+      "name": "librt",
+      "version": "0.15.0",
+      "license": "MIT",
+      "classifier": "",
+      "homepage": "https://github.com/mypyc/librt",
+      "scope": "dev",
+      "direct": false,
+      "verdict": "allow"
+    },
+    {
+      "name": "mypy",
+      "version": "2.3.1",
+      "license": "MIT",
+      "classifier": "",
+      "homepage": "https://www.mypy-lang.org/",
+      "scope": "dev",
+      "direct": true,
+      "verdict": "allow"
+    },
+    {
+      "name": "mypy-extensions",
+      "version": "1.1.0",
+      "license": "MIT",
+      "classifier": "",
+      "homepage": "https://github.com/python/mypy_extensions",
+      "scope": "dev",
+      "direct": false,
+      "verdict": "allow"
+    },
+    {
+      "name": "packaging",
+      "version": "26.3",
+      "license": "Apache-2.0 OR BSD-2-Clause",
+      "classifier": "",
+      "homepage": "https://github.com/pypa/packaging",
+      "scope": "dev",
+      "direct": false,
+      "verdict": "allow"
+    },
+    {
+      "name": "pathspec",
+      "version": "1.1.1",
+      "license": "Mozilla Public License 2.0 (MPL 2.0)",
+      "classifier": "Mozilla Public License 2.0 (MPL 2.0)",
+      "homepage": "https://python-path-specification.readthedocs.io/en/latest/index.html",
+      "scope": "dev",
+      "direct": false,
+      "verdict": "allow"
+    },
+    {
+      "name": "pluggy",
+      "version": "1.6.0",
+      "license": "MIT",
+      "classifier": "MIT License",
+      "homepage": "",
+      "scope": "dev",
+      "direct": false,
+      "verdict": "allow"
+    },
+    {
+      "name": "pygments",
+      "version": "2.21.0",
+      "license": "BSD-2-Clause",
+      "classifier": "",
+      "homepage": "https://pygments.org",
+      "scope": "dev",
+      "direct": false,
+      "verdict": "allow"
+    },
+    {
+      "name": "pytest",
+      "version": "9.1.1",
+      "license": "MIT",
+      "classifier": "",
+      "homepage": "https://docs.pytest.org/en/latest/",
+      "scope": "dev",
+      "direct": true,
+      "verdict": "allow"
+    },
+    {
+      "name": "pytest-cov",
+      "version": "7.1.0",
+      "license": "MIT",
+      "classifier": "MIT License",
+      "homepage": "https://pytest-cov.readthedocs.io/",
+      "scope": "dev",
+      "direct": true,
+      "verdict": "allow"
+    },
+    {
+      "name": "ruff",
+      "version": "0.16.6",
+      "license": "MIT",
+      "classifier": "",
+      "homepage": "https://docs.astral.sh/ruff",
+      "scope": "dev",
+      "direct": true,
+      "verdict": "allow"
+    }
+  ],
+  "services": [
+    {
+      "name": "Vaultwarden",
+      "license": "AGPL-3.0-only",
+      "use": "credential store; cvc talks to it over HTTP",
+      "verified": false,
+      "note": "unverified: from upstream docs, not checked from installed metadata",
+      "verdict_if_linked": "deny"
+    },
+    {
+      "name": "Authentik",
+      "license": "MIT (core); enterprise/ dir under proprietary Authentik EE license",
+      "use": "SSO in front of the auth stack",
+      "verified": false,
+      "note": "unverified: from upstream docs, not checked from installed metadata",
+      "verdict_if_linked": "allow"
+    },
+    {
+      "name": "step-ca (smallstep)",
+      "license": "Apache-2.0",
+      "use": "internal CA for tiergate client certs",
+      "verified": false,
+      "note": "unverified: from upstream docs, not checked from installed metadata",
+      "verdict_if_linked": "allow"
+    },
+    {
+      "name": "Traefik",
+      "license": "MIT",
+      "use": "k3s ingress",
+      "verified": false,
+      "note": "unverified: from upstream docs, not checked from installed metadata",
+      "verdict_if_linked": "allow"
+    },
+    {
+      "name": "k3s",
+      "license": "Apache-2.0",
+      "use": "container orchestration",
+      "verified": false,
+      "note": "unverified: from upstream docs, not checked from installed metadata",
+      "verdict_if_linked": "allow"
+    },
+    {
+      "name": "Tailscale client",
+      "license": "BSD-3-Clause (client); control plane proprietary SaaS",
+      "use": "tailnet transport / identity",
+      "verified": false,
+      "note": "unverified: from upstream docs, not checked from installed metadata",
+      "verdict_if_linked": "allow"
+    },
+    {
+      "name": "Home Assistant",
+      "license": "Apache-2.0",
+      "use": "reminder notifications via MQTT discovery",
+      "verified": false,
+      "note": "unverified: from upstream docs, not checked from installed metadata",
+      "verdict_if_linked": "allow"
+    },
+    {
+      "name": "Eclipse Mosquitto",
+      "license": "EPL-2.0 OR EDL-1.0",
+      "use": "MQTT broker",
+      "verified": false,
+      "note": "unverified: from upstream docs, not checked from installed metadata",
+      "verdict_if_linked": "allow"
+    },
+    {
+      "name": "yubikey-manager (ykman)",
+      "license": "BSD-2-Clause",
+      "use": "hardware-key enrollment tooling",
+      "verified": false,
+      "note": "unverified: not installed here",
+      "verdict_if_linked": "allow"
+    },
+    {
+      "name": "segno",
+      "license": "BSD-3-Clause",
+      "use": "estate-kit QR codes (also a Python dep, [estate])",
+      "verified": true,
+      "note": "verified from installed metadata (1.6.1: BSD License)",
+      "verdict_if_linked": "allow"
+    }
+  ]
+}
