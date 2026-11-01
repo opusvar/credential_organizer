@@ -22,15 +22,15 @@ python -c "import yaml, json; from cvc.broker.app import app; print(yaml.dump(js
 - `POST /v1/credentials/fetch` — default-deny, purpose-bound, audited credential fetch.
   Auth via `X-Agent-Id` + `Authorization: Bearer <token>`. Returns 401 (auth), 403 (ACL deny),
   502 (vault error), or 200 with `{"credential": "<uuid>", "field": "<field>", "value": "<val>"}`.
-- `POST /v1/backup/trigger` — run the encrypted backup pipeline now (the on-demand
+- `POST /v1/backup/trigger` — run the password-protected backup pipeline now (the on-demand
   equivalent of the weekly `cvc-backup` systemd user timer; D9, D10). Auth via
   `X-Agent-Id` + `Authorization: Bearer <token>`. Body: `{"purpose": "manual-trigger"}`.
 
   Note that the broker still runs in k3s (D10), so a trigger through this endpoint
   executes `cvc-backup` **in the broker pod**, not on the host. The pod has no access to
-  the host's `onedrive` client, so the off-host sync step is expected to log
-  `WARNING: OneDrive sync failed` — that is the sync gap D10 closes for the *scheduled*
-  run. Use `systemctl --user start cvc-backup.service` on the host for a manual run that
+  the host's `onedrive` client, so the off-host sync step is expected to fail (and, since F8,
+  to make `exit_code` non-zero even though the local export succeeded) — that is the sync gap D10
+  closes for the *scheduled* run. Use `systemctl --user start cvc-backup.service` on the host for a manual run that
   also reaches OneDrive.
 
   **⚠ BLOCKING — takes MINUTES.** A full `bw export` on this ARM64 host under a 200m CPU
@@ -49,16 +49,22 @@ python -c "import yaml, json; from cvc.broker.app import app; print(yaml.dump(js
   | 200 | The **trigger** succeeded. Check `exit_code` for whether the **backup** did. |
   | 401 | Authentication failed. |
   | 403 | ACL deny — agent lacks the `backup` capability, or the purpose is not permitted. |
+  | 409 | A backup is already running (single-flight; the refusal is audited as `deny:busy`). |
+  | 413 | Request body over the 8 KB limit (applies to every endpoint). |
   | 503 | The subprocess could not be started at all. |
   | 504 | The backup exceeded the internal 600s cap and was killed. |
 
   200 body: `{"triggered": true, "exit_code": 0, "log": "<last 2000 chars of stdout>",
-  "note": "..."}`. `exit_code: 0` means the encrypted export landed in the pod's
+  "note": "..."}`. `exit_code: 0` means the password-protected exports landed in the pod's
   `BACKUP_DIR`.
-  A non-zero `exit_code` means the backup failed — read `log`. Note that an OneDrive
-  off-host sync failure does **not** change `exit_code` (it is non-fatal by design, D9);
-  it appears only as a `WARNING: OneDrive sync failed` line, which goes to the child's
-  stderr and so is visible in the broker log rather than in `log`.
+  A non-zero `exit_code` means the backup failed — read `log`. Since PR #3 (F8) a failed
+  OneDrive copy/sync also makes `cvc-backup` exit non-zero (the local export is kept and
+  retention still runs); a missing `BACKUP_EXPORT_PASSWORD` fails the run too. stderr is not
+  returned: a redacted tail (secret-looking lines dropped) goes to the broker log.
+
+  The broker runs from a built image: after merging changes to `src/cvc/broker/` or
+  `src/cvc/backup/`, run `deploy/rebuild.sh --restart` or the live pod keeps the old behaviour.
+  The broker listens on 8710 (hostPort on the Tailscale IP `100.106.97.34`).
 
 The other components (importers, reminders, backup) are CLIs/jobs, not HTTP services, so they
 have no OpenAPI surface; their contracts live in `ARCHITECTURE.md` and their `--help`.
