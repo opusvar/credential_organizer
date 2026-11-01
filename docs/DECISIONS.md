@@ -141,7 +141,7 @@ Recreate strategy for the port mutex, resource limits on the bw subprocess.
 **deploy/remind-cronjob.yaml and deploy/backup-cronjob.yaml are kept** as reference and fallback
 but are not applied. The active deployment is the systemd units in deploy/.
 
-## D11 — Hardware recovery keys  **[DECIDED 2026-09-13]**
+## D11 — Hardware recovery keys  **[RESOLVED 2026-10-31]** (decided 2026-09-13)
 **Decision:** YubiKeys will serve as hardware recovery keys for the vault.
 
 **Context:** D4 established encrypted export (primary) + Vaultwarden Emergency Access (secondary)
@@ -152,15 +152,17 @@ passkey) that can unlock the vault master password or serve as a second factor f
 login. In a break-glass scenario where the OPi is unreachable and Emergency Access is unavailable,
 the YubiKey provides offline, hardware-bound access to the master password.
 
-**Open questions (to resolve before implementation):**
-- Which YubiKey mode: HMAC-SHA1 (slot 2, works offline, derives a key from a challenge) vs
-  FIDO2/WebAuthn (requires a browser/relying party, online)?
-- Where is the master password stored relative to the YubiKey — on the YubiKey itself (static
-  password slot 1), derived via HMAC (slot 2 + a stored challenge), or as a FIDO2 passkey for
-  Vaultwarden?
-- How many YubiKeys and where are they kept (on-person, offsite, safety deposit)?
-- Does the backup export (D9) need a separate decryption step, or is the vault master password
-  alone sufficient for `bw import --format encrypted_json`?
+**Resolution (2026-10-31):**
+- **Mode:** FIDO2 is used for Vaultwarden 2FA, with 2 keys registered: primary on-person, backup
+  in the home safe.
+- **Master password:** NOT stored on the key. Static-password slots can be read by anything that
+  can type. The master password, `BACKUP_EXPORT_PASSWORD` and the Vaultwarden recovery code are
+  kept on paper in the safe, plus one offsite copy.
+- **Emergency Access:** unchanged.
+- **PIV:** slot 9a holds the per-device cert key (see D13).
+- **Test restore:** `bw import` of the password-protected export (PR #3) with the passphrase.
+- **Procedures:** `deploy/yubikey/RUNBOOK-yubikey.md` (PR #11). The registry's `hardware_keys`
+  section tracks keys, and `cvc-access check` warns when fewer than 2 active keys carry the `recovery` use.
 
 **Effect on cvc-backup:** the encrypted export (D9) is already encrypted with the vault master
 password. YubiKey integration does not change the export format — it changes how the master
@@ -191,3 +193,22 @@ validates it and generates artifacts. `deploy/broker-acl.yaml` becomes generated
 - No secrets in the registry: only `token_sha256`. Machine passwords stay in Vaultwarden.
 - Expired agents generate `allow: []`. Generators register through `@register_builder`, so the
   Mosquitto ACL and Mermaid graph arrive as new modules without changing the CLI dispatch.
+
+## D13 — Per-device certificates from a home CA (supersedes D8 for human devices)  **[DECIDED 2026-10-31]**
+**Problem:** human devices (phone, laptops, desktop) reached home services with shared or
+bearer credentials. Losing a device meant rotating everything, and the registry had no record of
+which device held which credential.
+**Decision:** every human device gets its own client certificate from a home CA (Smallstep
+step-ca, `deploy/step-ca`). All the certs sit under one human identity (`people.nathan`).
+- Phones get a `.p12`. Mac and Windows certs live on YubiKeys: PIV slot 9a, key generated on
+  the key, with attestation. YubiKeys are also the Vaultwarden FIDO2 2FA and recovery keys (D11).
+- The registry gains `people`, `hardware_keys` and `devices`. Devices are principals and hold
+  roles. Only public metadata is stored (serials, fingerprints, dates). Keys named `p12`, `pin`,
+  `puk`, `management_key` and `private_key` are rejected.
+- Lifecycle runs through `cvc-access hwkey enroll|revoke` and `cvc-access device
+  add|set-cert|transfer|revoke`. Each device keeps an append-only `history`. Revoking (losing) a
+  YubiKey revokes every cert stored on it. Issuance itself is done by step-ca.
+- `check` warns about certs expiring within 30 days, devices with no cert, fewer than 2 recovery keys
+  and all active keys in one location.
+- **D8 still stands for agent→broker auth** (bearer token over Tailscale). D13 covers human
+  devices only.

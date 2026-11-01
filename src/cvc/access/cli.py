@@ -11,6 +11,7 @@ from cvc.access import brokeracl, graph, mosquitto  # noqa: F401  (register buil
 from cvc.access.mosquitto import build_mosquitto
 from cvc.access.builders import BUILDERS
 from cvc.access.check import check_registry
+from cvc.access.edit import add_parsers as add_edit_parsers, run_edit
 from cvc.access.importacl import import_broker_acl
 from cvc.access.model import RegistryError, load_registry
 
@@ -44,7 +45,11 @@ def main(argv: list[str] | None = None) -> int:
     i.add_argument("acl")
     i.add_argument("--out", default=DEFAULT_REGISTRY)
     i.add_argument("--force", action="store_true", help="overwrite --out if it exists")
+    add_edit_parsers(sub, reg_kw)
     args = ap.parse_args(argv)
+
+    if getattr(args, "edit", None):
+        return run_edit(args)
 
     if args.cmd == "import-acl":
         out = Path(args.out)

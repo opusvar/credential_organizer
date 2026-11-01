@@ -22,6 +22,8 @@ _CLASSDEFS = """\
     classDef orphan fill:#fef9c3,stroke:#a16207,color:#0f172a,stroke-dasharray:2 3
     classDef principal fill:#dcfce7,stroke:#15803d,color:#0f172a
     classDef expired fill:#e5e7eb,stroke:#9ca3af,color:#6b7280,stroke-dasharray:3 3
+    classDef person fill:#fce7f3,stroke:#be185d,color:#0f172a
+    classDef hwkey fill:#fef3c7,stroke:#b45309,color:#0f172a
     classDef soon fill:#fed7aa,stroke:#c2410c,color:#0f172a,stroke-width:2px"""
 
 
@@ -121,6 +123,49 @@ def build_graph(registry: Registry, today: dt.date | None = None) -> str:
     principal_nodes("AI agents", "agents", registry.agents)
     principal_nodes("Machines / sensors", "machines", registry.machines)
 
+    if registry.people:
+        lines.append('    subgraph people["People"]')
+        for uid in sorted(registry.people):
+            nid = ids.get("u", uid)
+            cls("person", nid)
+            lines.append(f'        {nid}["{mermaid_label(uid)}"]')
+        lines.append("    end")
+    if registry.hardware_keys:
+        lines.append('    subgraph hwkeys["Hardware keys"]')
+        for kid in sorted(registry.hardware_keys):
+            k = registry.hardware_keys[kid]
+            nid = ids.get("k", kid)
+            label = f"{mermaid_label(kid)}<br/>{mermaid_label(k.location)}"
+            if k.usable:
+                cls("hwkey", nid)
+            else:
+                label += f"<br/>({mermaid_label(k.status)})"
+                cls("expired", nid)
+            lines.append(f'        {nid}["{label}"]')
+        lines.append("    end")
+    if registry.devices:
+        lines.append('    subgraph devices["Devices"]')
+        for did in sorted(registry.devices):
+            d = registry.devices[did]
+            nid = ids.get("p", did)
+            c = d.cert
+            label = f"{mermaid_label(did)}<br/>{mermaid_label(d.kind)}"
+            label += (f"<br/>cert: {mermaid_label(c.status)} ({mermaid_label(c.storage)})"
+                      if c else "<br/>(no cert)")
+            soon = (c is not None and c.status == "active" and c.not_after is not None
+                    and c.not_after <= soon_limit)
+            if (c is not None and c.status in ("revoked", "expired")) or not d.active(today):
+                cls("expired", nid)
+            elif soon:
+                cls("soon", nid)
+                label += f"<br/>cert expiring {c.not_after.isoformat()}"
+            else:
+                cls("principal", nid)
+            if not d.roles:
+                label += "<br/>(no roles)"
+            lines.append(f'        {nid}["{label}"]')
+        lines.append("    end")
+
     lines.append('    subgraph roles["Roles"]')
     for rid in sorted(registry.roles):
         nid = ids.get("r", rid)
@@ -146,7 +191,14 @@ def build_graph(registry: Registry, today: dt.date | None = None) -> str:
             lines.append(f'        {nid}["{label}<br/>(not enforced)"]')
     lines.append("    end")
 
-    for group in (registry.agents, registry.machines):
+    for did in sorted(registry.devices):
+        d = registry.devices[did]
+        if d.owner in registry.people:
+            lines.append(f"    {ids.get('u', d.owner)} --> {ids.get('p', did)}")
+        if d.cert and d.cert.storage == "yubikey-piv" and d.cert.hardware_key:
+            arrow = "-->" if d.cert.status in ("pending", "active") else "-.->"
+            lines.append(f"    {ids.get('p', did)} {arrow} {ids.get('k', d.cert.hardware_key)}")
+    for group in (registry.agents, registry.machines, registry.devices):
         for pid in sorted(group):
             for rid in sorted(group[pid].roles):
                 lines.append(f"    {ids.get('p', pid)} --> {ids.get('r', rid)}")
@@ -168,14 +220,40 @@ def build_graph(registry: Registry, today: dt.date | None = None) -> str:
            f"Generated {today.isoformat()} by `cvc-access build graph` from the access registry.",
            "", "```mermaid", *lines, "```", "",
            "Solid blue = enforced; dashed = documented only (not enforced); grey = expired; "
-           f"orange = expires within {SOON_DAYS} days; yellow dashed = unused role.", "",
+           f"orange = expires within {SOON_DAYS} days; yellow dashed = unused role. "
+           "Revoked certs and lost/revoked/retired hardware keys are grey. Cert serials and "
+           "fingerprints are never shown.", "",
            "## Principals", "",
            "| id | type | roles | expires | status |", "|---|---|---|---|---|"]
-    for sect, group in (("agent", registry.agents), ("machine", registry.machines)):
+    for sect, group in (("agent", registry.agents), ("machine", registry.machines),
+                        ("device", registry.devices)):
         for pid in sorted(group):
             p = group[pid]
             out.append(f"| {_cell(pid)} | {sect} | {_cell(', '.join(sorted(p.roles)) or '-')} | "
                        f"{p.expires.isoformat() if p.expires else '-'} | {status(p)} |")
+    if registry.devices:
+        out += ["", "## Devices", "", "| id | owner | kind | cert storage | cert status | "
+                "cert not after | history entries |", "|---|---|---|---|---|---|---|"]
+        for did in sorted(registry.devices):
+            d = registry.devices[did]
+            c = d.cert
+            out.append(f"| {_cell(did)} | {_cell(d.owner)} | {_cell(d.kind)} | "
+                       f"{_cell(c.storage) if c else '-'} | "
+                       f"{_cell(c.status) if c else 'no cert'} | "
+                       f"{c.not_after.isoformat() if c and c.not_after else '-'} | "
+                       f"{len(d.history)} |")
+    if registry.hardware_keys:
+        on_key: dict[str, int] = {}
+        for d in registry.devices.values():
+            if d.cert and d.cert.hardware_key and d.cert.status in ("pending", "active"):
+                on_key[d.cert.hardware_key] = on_key.get(d.cert.hardware_key, 0) + 1
+        out += ["", "## Hardware keys", "", "| id | owner | model | uses | location | status | "
+                "device certs |", "|---|---|---|---|---|---|---|"]
+        for kid in sorted(registry.hardware_keys):
+            k = registry.hardware_keys[kid]
+            out.append(f"| {_cell(kid)} | {_cell(k.owner)} | {_cell(k.model)} | "
+                       f"{_cell(', '.join(k.uses))} | {_cell(k.location)} | {_cell(k.status)} | "
+                       f"{on_key.get(kid, 0)} |")
     out += ["", "## Systems", "", "| id | kind | enforced |", "|---|---|---|"]
     for sid in sorted(registry.systems):
         s = registry.systems[sid]

@@ -70,3 +70,51 @@ machines:        # sensors/devices: one MQTT user each
   cvc-remind:
     roles: [cvc-remind-publisher]
     auth: {type: mqtt-user, username: cvc-remind}
+
+# ── Human devices (D13): per-device certs from the home CA (step-ca) ──────────
+# Public metadata only. Keys named p12/pin/puk/management_key/private_key are rejected.
+# Manage with: cvc-access hwkey enroll|revoke, cvc-access device add|set-cert|transfer|revoke
+# (these edits rewrite the file: key order is kept, comments are not).
+people:
+  nathan: {email: nathan@local}
+
+hardware_keys:   # YubiKeys: Vaultwarden FIDO2 2FA, PIV device certs, vault recovery (D11)
+  yk-primary:
+    owner: nathan
+    model: "YubiKey 5C NFC"
+    serial: 12345678             # public identifier, not a secret
+    uses: [fido2-vaultwarden, piv-device-cert, recovery]
+    location: on-person          # on-person | home-safe | offsite
+    enrolled: 2026-10-01
+    status: active               # active | lost | revoked | retired
+  yk-backup:
+    owner: nathan
+    model: "YubiKey 5 NFC"
+    serial: 87654321
+    uses: [fido2-vaultwarden, recovery]
+    location: home-safe
+    enrolled: 2026-10-01
+    status: active
+
+devices:         # principals: they hold roles like agents and machines
+  nathan-iphone:
+    owner: nathan
+    kind: phone                  # phone | laptop | desktop | tablet
+    cert:
+      storage: p12               # p12 | yubikey-piv
+      hardware_key: null         # required (active key) when storage is yubikey-piv
+      serial: "3f2a9c01"         # recorded by `device set-cert` after step-ca issuance
+      fingerprint_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+      not_after: 2027-01-31
+      status: active             # pending | active | revoked | expired
+    history:                     # append-only, in date order
+      - {date: 2026-10-01, event: issued, cert_serial: "3f2a9c01"}
+    roles: [worker-caller]
+  nathan-mac:
+    owner: nathan
+    kind: laptop
+    cert:
+      storage: yubikey-piv       # key generated on-key in PIV slot 9a, attested
+      hardware_key: yk-primary
+      status: pending            # awaiting issuance
+    roles: [worker-caller]

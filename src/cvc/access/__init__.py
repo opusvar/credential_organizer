@@ -8,7 +8,9 @@ config from it; v1 enforces kinds `credential-store` (broker ACL) and `mqtt`. Ki
 Model API for generators (all frozen dataclasses):
     load_registry(path) / parse_registry(dict) -> Registry   (raise RegistryError)
     Registry.systems/roles/agents/machines: dict[id, System|Role|Agent|Machine]
-    Registry.principals()            agents then machines
+    Registry.people/hardware_keys/devices: Person|HardwareKey|Device (D13)
+    Registry.principals()            agents, machines, then devices
+    Device: .owner/.kind/.cert (DeviceCert: storage, hardware_key, status, not_after)/.history
     Registry.grants_for(principal)   [(Role, Grant), ...]
     Registry.system_of(grant)        System (.kind, .attrs, .enforced)
     Grant: .credential/.purposes (credential-store), .topics/.access (mqtt),
@@ -24,6 +26,10 @@ from cvc.access.model import (
     ENFORCED_KINDS,
     KINDS,
     Agent,
+    Device,
+    DeviceCert,
+    HardwareKey,
+    Person,
     Grant,
     Machine,
     MachineAuth,
@@ -38,7 +44,8 @@ from cvc.access.model import (
 from cvc.access import brokeracl as _brokeracl  # noqa: F401,E402  (registers builder)
 
 __all__ = [
-    "BUILDERS", "ENFORCED_KINDS", "KINDS", "Agent", "Grant", "Machine", "MachineAuth",
+    "BUILDERS", "ENFORCED_KINDS", "KINDS", "Agent", "Device", "DeviceCert",
+    "HardwareKey", "Person", "Grant", "Machine", "MachineAuth",
     "Principal", "Registry", "RegistryError", "Role", "System", "load_registry",
     "parse_registry", "register_builder",
 ]
