@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.5", "mypy>=1.10"]
+dev = ["pytest>=8", "pytest-cov>=5", "ruff==0.16.6", "mypy>=1.10"]
 
 [project.scripts]
 cvc-import = "cvc.importers.__main__:main"
