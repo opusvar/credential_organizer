@@ -31,7 +31,7 @@ _SECRET_KEYS = frozenset({"password", "passwd", "secret", "token", "api_key", "p
 DEVICE_KINDS = ("phone", "laptop", "desktop", "tablet")
 CERT_STORAGE = ("p12", "yubikey-piv")
 CERT_STATUS = ("pending", "active", "revoked", "expired")
-HWKEY_STATUS = ("active", "lost", "revoked", "retired")
+HWKEY_STATUS = ("active", "lost", "revoked", "retired", "suspended")
 HWKEY_LOCATIONS = ("on-person", "home-safe", "offsite")
 HWKEY_USES = ("fido2-vaultwarden", "piv-device-cert", "recovery")
 PERSON_TIERS = ("guest-short", "guest-long", "media-only", "low", "medium", "high", "admin",
@@ -472,7 +472,8 @@ def _parse_humans(data: dict, roles: dict, seen: dict, errs: list[str]):
                         errs.append(f"{cp}.hardware_key: required when storage is yubikey-piv")
                     elif hk not in hwkeys:
                         errs.append(f"{cp}.hardware_key: unknown hardware key {hk!r}")
-                    elif status in ("pending", "active") and not hwkeys[hk].usable:
+                    elif (status in ("pending", "active") and not hwkeys[hk].usable
+                          and hwkeys[hk].status != "suspended"):
                         errs.append(f"{cp}: {status} cert but hardware key {hk!r} is "
                                     f"{hwkeys[hk].status} (revoke the cert)")
                 elif hk is not None:

@@ -26,7 +26,7 @@ def base() -> dict:
         "version": 1,
         "systems": {"workers": {"kind": "http"}},
         "roles": {"home-services": {"grants": [{"system": "workers", "paths": ["/"]}]}},
-        "people": {"nathan": {"email": "nathan@local"}},
+        "people": {"nathan": {"email": "nathan@local", "tier": "owner"}},
         "hardware_keys": {
             "yk-primary": {"owner": "nathan", "model": "YubiKey 5C NFC", "serial": 12345678,
                            "uses": ["fido2-vaultwarden", "piv-device-cert", "recovery"],

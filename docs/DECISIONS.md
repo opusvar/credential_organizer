@@ -225,3 +225,21 @@ step-ca, `deploy/step-ca`). All the certs sit under one human identity (`people.
   and all active keys in one location.
 - **D8 still stands for agent→broker auth** (bearer token over Tailscale). D13 covers human
   devices only.
+
+## D14 — Always at least one active owner hardware key  **[DECIDED 2026-11-01]**
+**Problem:** the owner YubiKey is the root of recovery (D11): Vaultwarden FIDO2 2FA, owner-tier
+auth (D12) and PIV device certs (D13) all hang off it. A single `hwkey revoke`, `person remove`
+or tier change could leave the registry with no usable owner key, i.e. no way back in.
+**Decision:** the registry must always hold at least 1 active hardware key owned by an
+owner-tier person.
+- `cvc-access check` reports an error at zero and a warning at exactly one (D11 wants 2+).
+- Every `cvc-access` edit is refused if it would take the count from >=1 to 0: `hwkey revoke`,
+  `hwkey suspend`, `hwkey replace`, `person remove`, `person set-tier`, `device lost`, and a
+  backstop in `run_edit` for any future command. `--dry-run` is refused too. There is **no
+  `--force`**: to drop the last key, first enroll a replacement.
+- Allowed instead: `hwkey suspend|resume` (reversible lockout; certs stay recorded),
+  `hwkey transfer --to <owner-tier person>` and `hwkey replace OLD --new NEW` (NEW must be active,
+  or is enrolled in the same edit; then OLD is retired and its certs revoked). Each writes a
+  `history` entry on the key and prints the ykman / Vaultwarden / `step ca revoke` steps. It
+  never runs them.
+- Hardware key status gains `suspended`. Certs on a suspended key stay valid in the registry.
