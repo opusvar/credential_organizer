@@ -1,36 +1,37 @@
 """The onboarding steps. Pure over (raw registry dict, spec, seams); the CLI wires real IO.
 
-Registry mutations go through cvc.access.edit helpers where they exist (guest_add,
-device_add, hwkey_enroll). Non-guest people and agents have no public add helper, so the
-wizard inserts the same shape and then validates the whole document exactly like
+All registry mutations go through cvc.access.edit helpers (person_add, agent_add,
+guest_add, device_add, hwkey_enroll), which validate the whole document exactly like
 `cvc-access` does: parse_registry + check_tiers (tier/tailnet/grant rule) +
 check_classification (agents, D16 matrix). Any error finding for the new id is a refusal.
+The diff/confirm/write step is cvc.access.edit.commit_registry.
 """
 from __future__ import annotations
 
 import argparse
 import copy
 import datetime as dt
-import difflib
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import yaml
 
-from cvc.access.check import check_classification, check_tiers
 from cvc.access.classify import classify_grant, grant_labels
 from cvc.access.edit import (
     EditError,
+    agent_add,
+    commit_registry,
+    default_tailnet,
     device_add,
     guest_add,
     hwkey_enroll,
     owner_primary_keys,
+    person_add,
+    validate_new,
 )
 from cvc.access.model import (
-    AGENT_TIERS,
     CERT_STORAGE,
     DEVICE_KINDS,
     GUEST_DEFAULT_DAYS,
@@ -42,7 +43,6 @@ from cvc.access.model import (
     PERSON_TIERS,
     Registry,
     RegistryError,
-    parse_registry,
 )
 from cvc.deploygen.traefik import build_tiergate_configmap
 from cvc.onboard.authentik import AuthentikClient, RecordingAuthentik, tier_group
@@ -113,40 +113,22 @@ class Seams:
     today: dt.date = field(default_factory=lambda: dt.datetime.now().astimezone().date())
 
 
-def default_tailnet(tier: str) -> str:
-    if tier in GUEST_TIERS:
-        return "guests"
-    return "owner" if tier == "owner" else "family"
+__all__ = ["default_tailnet"]   # re-exported from cvc.access.edit
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 
 def _validate(data: dict, prefix: str, agents: bool = False) -> Registry:
-    """parse_registry + the existing tier/grant checks; refuse on errors touching `prefix`."""
+    """cvc.access.edit.validate_new, with refusals as OnboardError."""
     try:
-        reg = parse_registry(data)
-    except RegistryError as e:
-        raise OnboardError("registry would be invalid:\n  " + "\n  ".join(e.errors)) from e
-    findings = check_tiers(reg) + (check_classification(reg) if agents else [])
-    errs = [f"{f.path}: {f.message}" for f in findings
-            if f.level == "error" and (f.path == prefix or f.path.startswith(prefix + "."))]
-    if errs:
-        raise OnboardError("refused by tier rules:\n  " + "\n  ".join(errs))
-    return reg
+        return validate_new(data, prefix, agents)
+    except EditError as e:
+        raise OnboardError(str(e)) from e
 
 
 def _header(io: IO, n: int | str, title: str) -> None:
     io.out("")
     io.out(f"== Step {n}: {title} ==")
-
-
-class _NoAlias(yaml.SafeDumper):
-    def ignore_aliases(self, data: Any) -> bool:   # shared date objects -> no &id001 anchors
-        return True
-
-
-def _render(data: dict) -> str:
-    return yaml.dump(data, Dumper=_NoAlias, sort_keys=False, allow_unicode=True)
 
 
 def _emit_file(io: IO, path: Path, text: str, dry_run: bool, what: str) -> None:
@@ -161,21 +143,19 @@ def _emit_file(io: IO, path: Path, text: str, dry_run: bool, what: str) -> None:
 
 def _commit(io: IO, path: Path, original: str, data: dict, confirm_word: str,
             dry_run: bool) -> bool:
-    new = _render(data)
     io.out("")
     io.out("== Registry diff ==")
-    io.out("".join(difflib.unified_diff(original.splitlines(keepends=True),
-                                        new.splitlines(keepends=True), str(path),
-                                        f"{path} (new)")).rstrip())
-    if dry_run:
-        io.out("dry run: registry not written")
-        return False
-    ans = io.ask(f"Type '{confirm_word}' to write the registry (anything else aborts): ")
-    if ans.strip() != confirm_word:
-        raise OnboardError("aborted: confirmation did not match; nothing written")
-    path.write_text(new, encoding="utf-8")
-    io.out(f"wrote {path}")
-    return True
+
+    def confirm() -> bool:
+        ans = io.ask(f"Type '{confirm_word}' to write the registry (anything else aborts): ")
+        return ans.strip() == confirm_word
+    try:
+        written = commit_registry(path, original, data, dry_run=dry_run, out=io.out,
+                                  confirm=confirm)
+    except EditError as e:
+        raise OnboardError(str(e)) from e
+    io.out(f"wrote {path}" if written else "dry run: registry not written")
+    return written
 
 
 def _run(io: IO, s: Seams, cmds, execute: bool) -> None:
@@ -223,26 +203,20 @@ def _step_who(io: IO, data: dict, sp: PersonSpec, today: dt.date) -> Registry:
     if not guest and sp.expires is not None:
         raise OnboardError("expiry is only for guest tiers")
     tailnet = sp.tailnet or default_tailnet(sp.tier)
-    hist = {"date": today, "event": "added", "display_name": sp.name, "via": "cvc onboard"}
     try:
         if guest:
             guest_add(data, argparse.Namespace(
                 id=sp.id, tier=sp.tier, email=sp.email, granted_by=sp.granted_by,
                 expires=sp.expires.isoformat() if sp.expires else None), today)
             entry = data["people"][sp.id]
+            data["people"][sp.id] = entry = {"name": sp.name, **entry}
             entry["tailnet"] = tailnet          # validated below (guests must be on guests)
             if sp.ha != "none":
                 entry["ha"] = sp.ha
-            entry["history"] = [hist]
+            entry["history"][-1]["via"] = "cvc onboard"
         else:
-            entry = {"tier": sp.tier, "tailnet": tailnet, "granted_by": sp.granted_by,
-                     "history": [hist]}
-            if sp.email:
-                entry = {"email": sp.email, **entry}
-            data.setdefault("people", None)
-            if data["people"] is None:
-                data["people"] = {}
-            data["people"][sp.id] = entry
+            person_add(data, sp.id, tier=sp.tier, granted_by=sp.granted_by, tailnet=tailnet,
+                       name=sp.name, email=sp.email, today=today, via="cvc onboard")
     except EditError as e:
         raise OnboardError(str(e)) from e
     reg = _validate(data, f"people.{sp.id}")
@@ -450,24 +424,11 @@ def onboard_agent(registry: str | Path, sp: AgentSpec, seams: Seams, *,
     data = copy.deepcopy(raw)
     io.out(f"Onboarding agent {sp.id}" + (" (DRY RUN: nothing is written)" if dry_run else ""))
     _header(io, 1, "Agent identity")
-    if sp.tier not in AGENT_TIERS:
-        raise OnboardError(f"tier {sp.tier!r} is not an agent tier ({', '.join(AGENT_TIERS)})")
-    taken = set(data.get("agents") or {}) | set(data.get("machines") or {}) \
-        | set(data.get("devices") or {})
-    if sp.id in taken:
-        raise OnboardError(f"principal {sp.id!r} already exists")
-    unknown = [r for r in sp.roles if r not in (data.get("roles") or {})]
-    if unknown:
-        raise OnboardError(f"unknown role(s): {', '.join(unknown)}")
-    entry: dict[str, Any] = {"tier": sp.tier, "tailnet": "agents", "sponsor": sp.sponsor,
-                             "granted_by": sp.granted_by, "roles": list(sp.roles)}
-    if sp.token_sha256:
-        entry["token_sha256"] = sp.token_sha256
-    if sp.expires:
-        entry["expires"] = sp.expires
-    if data.get("agents") is None:
-        data["agents"] = {}
-    data["agents"][sp.id] = entry
+    try:
+        agent_add(data, sp.id, tier=sp.tier, sponsor=sp.sponsor, roles=sp.roles,
+                  granted_by=sp.granted_by, token_sha256=sp.token_sha256, expires=sp.expires)
+    except EditError as e:
+        raise OnboardError(str(e)) from e
     reg = _validate(data, f"agents.{sp.id}", agents=True)
     a = reg.agents[sp.id]
     io.out(f"  id {sp.id}, tier {a.tier}, tailnet agents, sponsor {a.sponsor}, "

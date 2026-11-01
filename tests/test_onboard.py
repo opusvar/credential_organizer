@@ -117,7 +117,8 @@ def test_write_person_after_confirmation(reg, tmp_path):
     r = load_registry(reg)
     p = r.people["alice"]
     assert (p.tier, p.tailnet, p.granted_by) == ("medium", "family", "nathan")
-    assert p.history[0]["display_name"] == "Alice A"
+    assert p.name == "Alice A" and p.history[0]["via"] == "cvc onboard"
+    assert "display_name" not in p.history[0]
     assert (tmp_path / "o" / "tiergate-configmap.yaml").exists()
     assert (tmp_path / "o" / "tailnet-policy.hujson").exists()
     assert "&id" not in reg.read_text()

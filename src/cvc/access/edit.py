@@ -1,4 +1,5 @@
-"""Registry edits for hardware keys and devices (D13): `cvc-access hwkey|device ...`.
+"""Registry edits for people, agents, hardware keys and devices (D13):
+`cvc-access person|agent|guest|hwkey|device ...`.
 
 Each command loads the raw YAML, mutates it, re-validates the whole document with
 parse_registry, and writes it back only if it is valid. Key order is preserved
@@ -11,12 +12,15 @@ import datetime as dt
 import difflib
 import re
 import sys
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from cvc.access.check import check_classification, check_tiers
 from cvc.access.model import (
+    AGENT_TIERS,
     CERT_STORAGE,
     DEVICE_KINDS,
     GUEST_DEFAULT_DAYS,
@@ -24,6 +28,8 @@ from cvc.access.model import (
     HWKEY_LOCATIONS,
     HWKEY_ROLES,
     PERSON_TIERS,
+    TAILNETS,
+    Registry,
     RegistryError,
     parse_registry,
 )
@@ -462,6 +468,113 @@ def guest_checkout(data: dict, a: argparse.Namespace, today: dt.date) -> str:
     return "\n".join(out)
 
 
+# ── people / agents (public helpers, also used by `cvc onboard`) ─────────────
+NON_GUEST_TIERS = tuple(t for t in PERSON_TIERS if t not in GUEST_TIERS)
+
+
+def default_tailnet(tier: str) -> str:
+    if tier in GUEST_TIERS:
+        return "guests"
+    return "owner" if tier == "owner" else "family"
+
+
+def validate_new(data: dict, prefix: str, agents: bool = False) -> Registry:
+    """parse_registry + tier/grant checks (+ D16 classification for agents).
+
+    Raises EditError for an invalid registry or any error finding on `prefix`."""
+    try:
+        reg = parse_registry(data)
+    except RegistryError as e:
+        raise EditError("registry would be invalid:\n  " + "\n  ".join(e.errors)) from e
+    findings = check_tiers(reg) + (check_classification(reg) if agents else [])
+    errs = [f"{f.path}: {f.message}" for f in findings
+            if f.level == "error" and (f.path == prefix or f.path.startswith(prefix + "."))]
+    if errs:
+        raise EditError("refused by tier rules:\n  " + "\n  ".join(errs))
+    return reg
+
+
+def person_add(data: dict, pid: str, *, tier: str, granted_by: str,
+               tailnet: str | None = None, name: str | None = None,
+               email: str | None = None, today: dt.date | None = None,
+               via: str | None = None) -> tuple[dict, str]:
+    """Add a non-guest person (guests: `guest_add`). Mutates and returns `data` + message.
+
+    Validates the whole document (tier/tailnet/grant rule); on refusal the entry is removed."""
+    if tier not in NON_GUEST_TIERS:
+        raise EditError(f"tier {tier!r} is not a non-guest person tier "
+                        f"({', '.join(NON_GUEST_TIERS)}); use `guest add` for guests")
+    if name is not None and not str(name).strip():
+        raise EditError("name must not be empty")
+    people = _section(data, "people")
+    if pid in people:
+        raise EditError(f"person {pid!r} already exists")
+    tailnet = tailnet or default_tailnet(tier)   # validated with the whole document
+    today = today or dt.datetime.now().astimezone().date()
+    hist: dict[str, Any] = {"date": today, "event": "added"}
+    if via:
+        hist["via"] = via
+    entry: dict[str, Any] = {}
+    if name:
+        entry["name"] = str(name).strip()
+    if email:
+        entry["email"] = email
+    entry.update(tier=tier, tailnet=tailnet, granted_by=granted_by, history=[hist])
+    people[pid] = entry
+    try:
+        validate_new(data, f"people.{pid}")
+    except EditError:
+        del people[pid]
+        raise
+    label = f" ({entry['name']})" if name else ""
+    return data, (f"added person {pid}{label}: tier {tier}, tailnet {tailnet}, "
+                  f"granted by {granted_by}")
+
+
+def agent_add(data: dict, aid: str, *, tier: str, sponsor: str, roles: Iterable[str] = (),
+              granted_by: str | None = None, token_sha256: str | None = None,
+              expires: dt.date | None = None) -> tuple[dict, str]:
+    """Add an AI agent on the agents tailnet. Mutates and returns `data` + message.
+
+    granted_by defaults to the sponsor. Validates tier/grant rules and the D16 matrix."""
+    if tier not in AGENT_TIERS:
+        raise EditError(f"tier {tier!r} is not an agent tier ({', '.join(AGENT_TIERS)})")
+    taken = (set(data.get("agents") or {}) | set(data.get("machines") or {})
+             | set(data.get("devices") or {}))
+    if aid in taken:
+        raise EditError(f"principal {aid!r} already exists")
+    roles = list(roles)
+    unknown = [r for r in roles if r not in (data.get("roles") or {})]
+    if unknown:
+        raise EditError(f"unknown role(s): {', '.join(unknown)}")
+    entry: dict[str, Any] = {"tier": tier, "tailnet": "agents", "sponsor": sponsor,
+                             "granted_by": granted_by or sponsor, "roles": roles}
+    if token_sha256:
+        entry["token_sha256"] = token_sha256
+    if expires:
+        entry["expires"] = expires
+    agents = _section(data, "agents")
+    agents[aid] = entry
+    try:
+        validate_new(data, f"agents.{aid}", agents=True)
+    except EditError:
+        del agents[aid]
+        raise
+    return data, (f"added agent {aid}: tier {tier}, sponsor {sponsor}, "
+                  f"roles {', '.join(roles) or '-'}")
+
+
+def _cli_person_add(data: dict, a: argparse.Namespace, today: dt.date) -> str:
+    return person_add(data, a.id, tier=a.tier, granted_by=a.granted_by, tailnet=a.tailnet,
+                      name=a.name, email=a.email, today=today)[1]
+
+
+def _cli_agent_add(data: dict, a: argparse.Namespace, today: dt.date) -> str:
+    return agent_add(data, a.id, tier=a.tier, sponsor=a.sponsor, roles=_csv(a.roles),
+                     granted_by=a.granted_by, token_sha256=a.token_sha256,
+                     expires=dt.date.fromisoformat(a.expires) if a.expires else None)[1]
+
+
 def add_parsers(sub: argparse._SubParsersAction, reg_kw: dict) -> None:
     hw = sub.add_parser("hwkey", help="enroll or revoke hardware keys (YubiKeys)")
     hws = hw.add_subparsers(dest="action", required=True)
@@ -532,8 +645,17 @@ def add_parsers(sub: argparse._SubParsersAction, reg_kw: dict) -> None:
     lo.add_argument("id")
     lo.set_defaults(edit=device_lost)
 
-    pe = sub.add_parser("person", help="offboard people")
+    pe = sub.add_parser("person", help="add, re-tier and offboard people")
     pes = pe.add_subparsers(dest="action", required=True)
+    pa = pes.add_parser("add", help="add a non-guest person (guests: `guest add`)")
+    pa.add_argument("id")
+    pa.add_argument("--tier", required=True, choices=NON_GUEST_TIERS)
+    pa.add_argument("--granted-by", default="nathan")
+    pa.add_argument("--tailnet", choices=TAILNETS,
+                    help="default: owner for owners, family otherwise")
+    pa.add_argument("--name", help="display name")
+    pa.add_argument("--email")
+    pa.set_defaults(edit=_cli_person_add)
     pr = pes.add_parser("remove", help="remove a person, their devices, keys and assistants")
     pr.add_argument("id")
     pr.set_defaults(edit=person_remove)
@@ -553,22 +675,84 @@ def add_parsers(sub: argparse._SubParsersAction, reg_kw: dict) -> None:
     gc = gus.add_parser("checkout", help="end a guest's access now (and their agents')")
     gc.add_argument("id")
     gc.set_defaults(edit=guest_checkout)
-    for p in (e, r, a, s, v, t, lo, pr, su, rs, tr, rp, st, ga, gc):
+    ag = sub.add_parser("agent", help="add AI agents (D16)")
+    ags = ag.add_subparsers(dest="action", required=True)
+    aa = ags.add_parser("add", help="add an agent on the agents tailnet")
+    aa.add_argument("id")
+    aa.add_argument("--tier", required=True, choices=AGENT_TIERS)
+    aa.add_argument("--sponsor", required=True, help="person id")
+    aa.add_argument("--roles", help="comma-separated role ids")
+    aa.add_argument("--granted-by", help="person id (default: the sponsor)")
+    aa.add_argument("--token-sha256")
+    aa.add_argument("--expires", help="YYYY-MM-DD")
+    aa.set_defaults(edit=_cli_agent_add)
+    for p in (e, r, a, s, v, t, lo, pr, su, rs, tr, rp, st, ga, gc, pa, aa):
         p.add_argument("--registry", **reg_kw)
-    for p in (lo, pr, r, su, rs, tr, rp, st, gc):
+    for p in (lo, pr, r, su, rs, tr, rp, st, gc, pa, aa):
         p.add_argument("--dry-run", action="store_true", help="show the diff; write nothing")
 
 
+class _NoAlias(yaml.SafeDumper):
+    def ignore_aliases(self, data: Any) -> bool:   # shared date objects -> no &id001 anchors
+        return True
+
+
+def render_registry(data: dict) -> str:
+    return yaml.dump(data, Dumper=_NoAlias, sort_keys=False, allow_unicode=True)
+
+
+def registry_diff(path: str | Path, original: str, new: str, suffix: str = "(new)") -> str:
+    return "".join(difflib.unified_diff(original.splitlines(keepends=True),
+                                        new.splitlines(keepends=True), str(path),
+                                        f"{path} {suffix}"))
+
+
+def commit_registry(path: str | Path, original: str, data: dict, *, dry_run: bool = False,
+                    out: Callable[[str], None] = print,
+                    confirm: Callable[[], bool] | None = None) -> bool:
+    """Diff/confirm/write an edited registry without argparse. Returns True if written.
+
+    The diff is shown on dry runs and before `confirm`; a falsy `confirm()` raises
+    EditError and nothing is written."""
+    path = Path(path)
+    new = render_registry(data)
+    if dry_run or confirm is not None:
+        diff = registry_diff(path, original, new, "(dry run)" if dry_run else "(new)")
+        if diff:
+            out(diff.rstrip("\n"))
+    if dry_run:
+        return False
+    if confirm is not None and not confirm():
+        raise EditError("aborted: confirmation did not match; nothing written")
+    path.write_text(new, encoding="utf-8")
+    return True
+
+
+def apply_edit(path: str | Path, mutate: Callable[[dict], str], *, dry_run: bool = False,
+               what: str = "this edit", out: Callable[[str], None] = print,
+               confirm: Callable[[], bool] | None = None) -> str:
+    """Load, mutate, guard (D14), validate, then diff/confirm/write. Raises on refusal.
+
+    The argparse-free core of `run_edit`; returns the edit's message."""
+    path = Path(path)
+    original = path.read_text(encoding="utf-8")
+    data = yaml.safe_load(original) or {}
+    before = active_owner_keys(data)
+    msg = mutate(data)
+    # Backstop for every edit, including ones added later (D14).
+    _guard_owner_keys(before, data, what)
+    parse_registry(data)
+    commit_registry(path, original, data, dry_run=dry_run, out=out, confirm=confirm)
+    return msg
+
+
 def run_edit(args: argparse.Namespace, today: dt.date | None = None) -> int:
-    path = Path(args.registry)
+    day = today or dt.datetime.now().astimezone().date()
+    dry = getattr(args, "dry_run", False)
+    what = f"{getattr(args, 'cmd', '')} {getattr(args, 'action', '')}".strip() or "this edit"
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        before = active_owner_keys(data)
-        msg = args.edit(data, args, today or dt.datetime.now().astimezone().date())
-        # Backstop for every edit, including ones added later (D14).
-        _guard_owner_keys(before, data, f"{getattr(args, 'cmd', '')} "
-                                        f"{getattr(args, 'action', '')}".strip() or "this edit")
-        parse_registry(data)
+        msg = apply_edit(args.registry, lambda d: args.edit(d, args, day), dry_run=dry,
+                         what=what, out=print)
     except RegistryError as e:
         for err in e.errors:
             print(f"error: {err}", file=sys.stderr)
@@ -576,15 +760,7 @@ def run_edit(args: argparse.Namespace, today: dt.date | None = None) -> int:
     except (EditError, OSError, ValueError, yaml.YAMLError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
-    new = yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
-    if getattr(args, "dry_run", False):
-        old = path.read_text(encoding="utf-8")
-        sys.stdout.writelines(difflib.unified_diff(
-            old.splitlines(keepends=True), new.splitlines(keepends=True),
-            str(path), f"{path} (dry run)"))
-        print(msg)
-        print("dry run: registry not written")
-        return 0
-    path.write_text(new, encoding="utf-8")
     print(msg)
+    if dry:
+        print("dry run: registry not written")
     return 0
