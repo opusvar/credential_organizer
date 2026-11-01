@@ -31,6 +31,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from .. import config
+from ..approvals import inspect as approvals_inspect
 from ..approvals import model as approvals_model
 from ..approvals.publisher import from_env as _approvals_publisher
 from ..approvals.service import ApprovalService, DecideError
@@ -157,7 +158,13 @@ def _approval_service() -> ApprovalService:
     if _APPROVAL_SVC is None:
         _APPROVAL_SVC = ApprovalService(publisher=_approvals_publisher(),
                                         state_path=os.environ.get("CVC_APPROVALS_STATE"))
+        approvals_inspect.attach(_APPROVAL_SVC)
     return _APPROVAL_SVC
+
+
+def _inspector() -> approvals_inspect.Inspector:
+    """ETag history/rejection log for the approval service (read-only debugging)."""
+    return approvals_inspect.attach(_approval_service())
 
 
 def _sweep_loop(stop: threading.Event) -> None:
@@ -187,7 +194,8 @@ _TRUST_TIERGATE_ENV = "CVC_TRUST_TIERGATE"
 # Browser origin of the personal dashboard allowed to call the human-facing endpoints.
 _DASHBOARD_ORIGIN_ENV = "CVC_DASHBOARD_ORIGIN"
 _HUMAN_PATHS = re.compile(
-    r"^/v1/(whoami|approvals/nonce|approvals/[^/]+/(decide|request))$")
+    r"^/v1/(whoami|approvals/nonce|approvals/diag|"
+    r"approvals/[^/]+/(decide|request|etag|history))$")
 # Networks /v1/whoami may be reached from (client IP via tier-gate/Traefik headers).
 _TAILNET_CIDRS_ENV = "CVC_TAILNET_CIDRS"
 _DEFAULT_TAILNET_CIDRS = "100.64.0.0/10"
@@ -838,7 +846,66 @@ def approval_nonce(
     nonces: _NonceStore = Depends(_nonces),  # noqa: B008
 ) -> dict:
     person, _ = _tiergate_identity(x_cvc_person, x_cvc_tier)
-    return {"nonce": nonces.issue(person), "expires_in": int(_NONCE_TTL)}
+    n = nonces.issue(person)
+    try:  # counts/timestamps only; the nonce value is never recorded
+        _inspector().record_nonce(None, "issued")
+    except Exception:  # noqa: BLE001 - visibility must never break the flow
+        _log.warning("approvals_inspect_failed", exc_info=True)
+    return {"nonce": n, "expires_in": int(_NONCE_TTL)}
+
+
+def _require_owner(person: str | None, tier: str | None, x_real_ip: str | None,
+                   x_forwarded_for: str | None) -> str:
+    """ETag debug endpoints: tailnet client + tier-gate identity with tier=owner."""
+    _require_tailnet_client(x_real_ip, x_forwarded_for)
+    who, t = _tiergate_identity(person, tier)
+    if t != "owner":
+        raise HTTPException(status_code=403, detail="owner tier required")
+    return who
+
+
+@app.get("/v1/approvals/diag", tags=["approvals"],
+         summary="[owner debug] status counts and recent 412/428 rejections")
+def approvals_diag(
+    x_cvc_person: str | None = Header(None, max_length=64),
+    x_cvc_tier: str | None = Header(None, max_length=32),
+    x_real_ip: str | None = Header(None, max_length=64),
+    x_forwarded_for: str | None = Header(None, max_length=512),
+    insp: approvals_inspect.Inspector = Depends(_inspector),  # noqa: B008
+) -> dict:
+    _require_owner(x_cvc_person, x_cvc_tier, x_real_ip, x_forwarded_for)
+    return insp.diag()
+
+
+@app.get("/v1/approvals/{approval_id}/etag", tags=["approvals"],
+         summary="[owner debug] current ETag, version, status and last event")
+def approval_etag(
+    approval_id: str,
+    x_cvc_person: str | None = Header(None, max_length=64),
+    x_cvc_tier: str | None = Header(None, max_length=32),
+    x_real_ip: str | None = Header(None, max_length=64),
+    x_forwarded_for: str | None = Header(None, max_length=512),
+    insp: approvals_inspect.Inspector = Depends(_inspector),  # noqa: B008
+) -> dict:
+    _require_owner(x_cvc_person, x_cvc_tier, x_real_ip, x_forwarded_for)
+    out = insp.etag_info(approval_id)
+    if out is None:
+        raise HTTPException(status_code=404, detail="no such approval")
+    return out
+
+
+@app.get("/v1/approvals/{approval_id}/history", tags=["approvals"],
+         summary="[owner debug] append-only version history of one approval")
+def approval_history(
+    approval_id: str,
+    x_cvc_person: str | None = Header(None, max_length=64),
+    x_cvc_tier: str | None = Header(None, max_length=32),
+    x_real_ip: str | None = Header(None, max_length=64),
+    x_forwarded_for: str | None = Header(None, max_length=512),
+    insp: approvals_inspect.Inspector = Depends(_inspector),  # noqa: B008
+) -> dict:
+    _require_owner(x_cvc_person, x_cvc_tier, x_real_ip, x_forwarded_for)
+    return {"id": approval_id, "history": insp.history(approval_id)}
 
 
 @app.get("/v1/approvals/{approval_id}", tags=["credentials"], summary="Approval status")
@@ -935,13 +1002,22 @@ def decide(
     if_match: str | None = Header(None, max_length=128),
 ) -> JSONResponse:
     person, tier = _tiergate_identity(x_cvc_person, x_cvc_tier)
-    version = _parse_if_match(if_match, approval_id)
+    insp = approvals_inspect.attach(svc)
+    try:
+        version = _parse_if_match(if_match, approval_id)
+    except HTTPException as e:
+        insp.record_rejection(approval_id, e.status_code, if_match, person, str(e.detail))
+        raise
     if not nonces.consume(body.nonce, person):
+        insp.record_nonce(approval_id, "rejected")
         raise HTTPException(status_code=403, detail="invalid or reused nonce")
+    insp.record_nonce(approval_id, "consumed")
     try:
         r = svc.decide(approval_id, body.decision, person=person, tier=tier,
                        passkey_user=x_authentik_username, expected_version=version)
     except DecideError as e:
+        if e.status_code in (412, 428):
+            insp.record_rejection(approval_id, e.status_code, if_match, person, e.detail)
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
     _sync_approval(approvals, svc, approval_id)
     a = approvals.get(approval_id)

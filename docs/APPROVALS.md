@@ -58,3 +58,28 @@ MQTT payloads never contain secrets, tokens or credential values. They name the 
   "decided_at": "RFC 3339 (optional)"
 }
 ```
+
+## ETag visibility (debugging)
+
+Read-only views for checking approval ETags (`"<id>.v<version>"`) and chasing 412/428s.
+Nothing here changes an approval.
+
+- **History** — every version the service publishes is appended to a per-approval history
+  `{version, etag, at, event, actor, status, mqtt_published_at, mqtt_cleared_at}`;
+  `event` ∈ created | decided | cancelled | expired | legacy-approve | republished, `actor` is
+  the deciding person/agent or `system`. Stored in a sidecar of the state file
+  (`$CVC_APPROVALS_STATE.inspect.json`, 0600) together with a ring buffer of the last 200
+  If-Match rejections (id, code, presented ETag, current ETag, person, time) and per-approval
+  nonce counts/timestamps (issued is global; consumed/rejected per approval). Nonce values
+  are never stored or returned.
+- **CLI** (all accept `--json`):
+  - `cvc-approvals etag <id>` — current ETag, version, status, last event
+  - `cvc-approvals history <id>` — full version table
+  - `cvc-approvals check-etag <id> <etag>` — `current` (exit 0) / `stale` (exit 3, shows the
+    version it was and every change since) / `unknown` (exit 1)
+  - `cvc-approvals diag [--mqtt-snapshot snap.json]` — counts by status, recent 412/428s, and
+    with a `{topic: retained payload}` snapshot from a subscriber, retained-vs-state mismatches
+    (missing / stale / should-be-cleared / orphan / unparseable)
+- **Broker** (owner tier via tier-gate, tailnet client only, dashboard origin check — same
+  gates as `/v1/whoami`): `GET /v1/approvals/{id}/etag`, `GET /v1/approvals/{id}/history`,
+  `GET /v1/approvals/diag`. Non-owner or off-tailnet → 403.
