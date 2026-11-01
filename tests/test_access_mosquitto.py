@@ -2,9 +2,9 @@ import datetime as dt
 
 import pytest
 
-from cvc.access import parse_registry, RegistryError
-from cvc.access.builders import BUILDERS
+from cvc.access import RegistryError, parse_registry
 from cvc.access import mosquitto as mq
+from cvc.access.builders import BUILDERS
 
 TODAY = dt.date(2026, 10, 31)
 

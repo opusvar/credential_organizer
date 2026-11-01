@@ -31,7 +31,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import re
-import uuid as _uuid_mod
 from dataclasses import dataclass
 
 import yaml
@@ -73,7 +72,7 @@ class Acl:
         self._agents: dict = (data or {}).get("agents", {}) or {}
 
     @classmethod
-    def load(cls, path: str) -> "Acl":
+    def load(cls, path: str) -> Acl:
         with open(path, encoding="utf-8") as fh:
             data = yaml.safe_load(fh) or {}
         for agent_id, agent in (data.get("agents") or {}).items():

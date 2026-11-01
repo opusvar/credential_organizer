@@ -51,6 +51,7 @@ def _run(*args: str, session: str | None = None,
             text=True,
             env=env,
             timeout=30,
+            check=False,
         )
     except FileNotFoundError as exc:
         raise VaultError("bw CLI not found — install Bitwarden CLI") from exc
@@ -84,7 +85,7 @@ class BwClient:
             import json as _json
             raw = _run("status")
             return _json.loads(raw)
-        except Exception:
+        except Exception:  # noqa: BLE001 - status probe falls back to {}
             return {}
 
     def configure(self) -> None:

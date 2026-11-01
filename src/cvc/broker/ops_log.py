@@ -9,7 +9,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -18,14 +18,14 @@ class OpsLog:
         self.path = Path(path)
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - best-effort ops log
             pass  # best-effort; write attempts will also fail and be swallowed
 
     def record(self, event: str, **fields) -> None:
         """Append one ops event line. Never raises — ops log failure is non-fatal."""
         try:
             entry = {
-                "ts": datetime.now(timezone.utc).isoformat(),
+                "ts": datetime.now(UTC).isoformat(),
                 "event": event,
                 **fields,
             }
@@ -37,5 +37,5 @@ class OpsLog:
                     os.fsync(fh.fileno())
                 finally:
                     fcntl.flock(fh, fcntl.LOCK_UN)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - best-effort ops log
             pass  # ops log is best-effort; never propagate to the request path

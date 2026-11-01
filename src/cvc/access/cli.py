@@ -8,12 +8,13 @@ from pathlib import Path
 import yaml
 
 from cvc.access import brokeracl, graph, mosquitto  # noqa: F401  (register builders)
-from cvc.access.mosquitto import build_mosquitto
 from cvc.access.builders import BUILDERS
 from cvc.access.check import check_registry
-from cvc.access.edit import add_parsers as add_edit_parsers, run_edit
+from cvc.access.edit import add_parsers as add_edit_parsers
+from cvc.access.edit import run_edit
 from cvc.access.importacl import import_broker_acl
 from cvc.access.model import RegistryError, load_registry
+from cvc.access.mosquitto import build_mosquitto
 
 DEFAULT_REGISTRY = "access/registry.yaml"
 
@@ -32,7 +33,7 @@ def _load(path: str):
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="cvc-access", description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    reg_kw = dict(default=DEFAULT_REGISTRY, help="registry file (default: %(default)s)")
+    reg_kw = {"default": DEFAULT_REGISTRY, "help": "registry file (default: %(default)s)"}
 
     sub.add_parser("validate").add_argument("--registry", **reg_kw)
     sub.add_parser("check").add_argument("--registry", **reg_kw)

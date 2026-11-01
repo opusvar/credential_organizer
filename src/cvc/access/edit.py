@@ -31,10 +31,10 @@ class EditError(Exception):
 def parse_ykman_info(text: str) -> dict[str, Any]:
     """Pull serial and model out of `ykman info` output."""
     out: dict[str, Any] = {}
-    m = re.search(r"^\s*Serial number:\s*(\d+)", text, re.M)
+    m = re.search(r"^\s*Serial number:\s*(\d+)", text, re.MULTILINE)
     if m:
         out["serial"] = int(m.group(1))
-    m = re.search(r"^\s*Device type:\s*(.+?)\s*$", text, re.M)
+    m = re.search(r"^\s*Device type:\s*(.+?)\s*$", text, re.MULTILINE)
     if m:
         out["model"] = m.group(1)
     return out

@@ -237,11 +237,11 @@ def test_f8_main_exits_nonzero_on_sync_failure(monkeypatch, tmp_path, capsys):
 
 def test_f8_unit_backup_dir_is_separate_from_onedrive_dir():
     unit = (Path(__file__).parents[1] / "deploy" / "cvc-backup.service").read_text()
-    m = re.search(r"^Environment=BACKUP_DIR=(.+)$", unit, re.M)
+    m = re.search(r"^Environment=BACKUP_DIR=(.+)$", unit, re.MULTILINE)
     assert m and m.group(1).strip() == "/mnt/data/cvc-backups"
     assert "onedrive" not in m.group(1)
 
 
 def test_env_example_documents_export_password():
     text = (Path(__file__).parents[1] / ".env.example").read_text()
-    assert re.search(r"^BACKUP_EXPORT_PASSWORD=", text, re.M)
+    assert re.search(r"^BACKUP_EXPORT_PASSWORD=", text, re.MULTILINE)

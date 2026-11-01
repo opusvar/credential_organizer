@@ -1,5 +1,4 @@
 """Tests for vault/client.py — env guards and pure helpers. No subprocess calls."""
-import os
 
 import pytest
 
@@ -92,9 +91,9 @@ def test_run_strips_non_allowlisted_env(monkeypatch, tmp_path):
     A secret like ANTHROPIC_API_KEY or AWS_SECRET_ACCESS_KEY in the process env
     must not leak into a bw subprocess that could log it or forward it.
     """
-    import subprocess
     from unittest.mock import MagicMock, patch
-    from cvc.vault.client import _run, VaultError
+
+    from cvc.vault.client import _run
 
     monkeypatch.setenv("SECRET_SHOULD_NOT_LEAK", "sensitive-value")
     monkeypatch.setenv("BW_SESSION", "fake-session")
@@ -104,7 +103,7 @@ def test_run_strips_non_allowlisted_env(monkeypatch, tmp_path):
 
     captured_env: dict = {}
 
-    def fake_run(argv, capture_output, text, timeout, env):
+    def fake_run(argv, capture_output, text, timeout, env, check):
         captured_env.update(env)
         m = MagicMock()
         m.returncode = 0

@@ -35,7 +35,8 @@ def test_prune_handles_missing_dir():
 def test_prune_ignores_non_backup_files(tmp_path):
     other = tmp_path / "not-a-backup.txt"
     other.write_text("keep me")
-    import os, time as t
+    import os
+    import time as t
     mtime = t.time() - 999 * 86400
     os.utime(other, (mtime, mtime))
     removed = prune(str(tmp_path), retention_days=30)

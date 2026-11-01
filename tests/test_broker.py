@@ -125,8 +125,8 @@ def test_acl_non_uuid_credential_rejected_at_load(tmp_path):
     acl_yaml = tmp_path / "acl.yaml"
     valid_uuid = "12345678-1234-1234-1234-123456789012"
     acl_yaml.write_text(
-        f"agents:\n  a1:\n    token_sha256: abc\n    allow:\n"
-        f"      - credential: not-a-uuid\n        purposes: ['p']\n"
+        "agents:\n  a1:\n    token_sha256: abc\n    allow:\n"
+        "      - credential: not-a-uuid\n        purposes: ['p']\n"
     )
     with pytest.raises(ValueError, match="not a UUID"):
         Acl.load(str(acl_yaml))
@@ -141,7 +141,7 @@ def test_acl_non_uuid_credential_rejected_at_load(tmp_path):
 
 # ── new: broker HTTP — /docs returns 404; /v1/audit/verify requires auth ──────
 
-def _make_app_client(tmp_path):
+def _make_app_client_gen(tmp_path):
     """Return a TestClient with a real config pointing at tmp_path."""
     import os
     from unittest.mock import patch
@@ -150,7 +150,6 @@ def _make_app_client(tmp_path):
     from cvc.broker.app import app
 
     # Build a Config by loading from env so we don't need to know all fields.
-    import os
     env_patch = {
         "BROKER_ACL": str(tmp_path / "acl.yaml"),
         "AUDIT_LOG": str(tmp_path / "audit.jsonl"),
@@ -171,10 +170,28 @@ def _make_app_client(tmp_path):
         yield client, valid_uuid
 
 
+_LIVE_GENS: list = []
+
+
+def _make_app_client(tmp_path):
+    """Create the generator and register it so the autouse fixture below closes it
+    deterministically (otherwise its patches leak into later tests until GC runs)."""
+    gen = _make_app_client_gen(tmp_path)
+    _LIVE_GENS.append(gen)
+    return gen
+
+
+@pytest.fixture(autouse=True)
+def _close_app_clients():
+    yield
+    while _LIVE_GENS:
+        _LIVE_GENS.pop().close()
+
+
 def test_broker_docs_disabled(tmp_path):
+    gen = _make_app_client(tmp_path)
+    client, _ = next(gen)
     for url in ("/docs", "/redoc", "/openapi.json"):
-        gen = _make_app_client(tmp_path)
-        client, _ = next(gen)
         assert client.get(url).status_code == 404, f"{url} should be 404"
 
 
@@ -190,7 +207,7 @@ def test_broker_audit_verify_requires_auth(tmp_path):
     assert r.status_code == 401
     # Good token
     r = client.get("/v1/audit/verify",
-                   headers={"x-agent-id": "agent1", "authorization": f"Bearer goodtoken"})
+                   headers={"x-agent-id": "agent1", "authorization": "Bearer goodtoken"})
     assert r.status_code == 200, r.text
     assert r.json()["intact"] is True
 
@@ -641,8 +658,7 @@ def test_readyz_requires_no_auth(tmp_path, monkeypatch):
 
 def _chunks(*parts):
     def gen():
-        for p in parts:
-            yield p
+        yield from parts
     return gen()
 
 
@@ -660,7 +676,7 @@ def test_body_limit_chunked_oversize_413(tmp_path):
 
 def test_body_limit_chunked_small_body_passes_through(tmp_path):
     gen = _make_app_client(tmp_path)
-    client, valid_uuid = next(gen)
+    client, _valid_uuid = next(gen)
     body = json.dumps({"credential": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "purpose": "t"}).encode()
     r = client.post(
         "/v1/credentials/fetch",

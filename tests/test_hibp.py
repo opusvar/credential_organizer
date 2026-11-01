@@ -2,8 +2,6 @@
 import hashlib
 from unittest.mock import MagicMock
 
-import pytest
-
 from cvc.reminders.hibp import _prefix_suffix, times_pwned
 
 

@@ -219,10 +219,10 @@ def build_graph(registry: Registry, today: dt.date | None = None) -> str:
     out = ["# Access graph", "",
            f"Generated {today.isoformat()} by `cvc-access build graph` from the access registry.",
            "", "```mermaid", *lines, "```", "",
-           "Solid blue = enforced; dashed = documented only (not enforced); grey = expired; "
+           ("Solid blue = enforced; dashed = documented only (not enforced); grey = expired; "
            f"orange = expires within {SOON_DAYS} days; yellow dashed = unused role. "
            "Revoked certs and lost/revoked/retired hardware keys are grey. Cert serials and "
-           "fingerprints are never shown.", "",
+           "fingerprints are never shown."), "",
            "## Principals", "",
            "| id | type | roles | expires | status |", "|---|---|---|---|---|"]
     for sect, group in (("agent", registry.agents), ("machine", registry.machines),
@@ -232,8 +232,8 @@ def build_graph(registry: Registry, today: dt.date | None = None) -> str:
             out.append(f"| {_cell(pid)} | {sect} | {_cell(', '.join(sorted(p.roles)) or '-')} | "
                        f"{p.expires.isoformat() if p.expires else '-'} | {status(p)} |")
     if registry.devices:
-        out += ["", "## Devices", "", "| id | owner | kind | cert storage | cert status | "
-                "cert not after | history entries |", "|---|---|---|---|---|---|---|"]
+        out += ["", "## Devices", "", ("| id | owner | kind | cert storage | cert status | "
+                 "cert not after | history entries |"), "|---|---|---|---|---|---|---|"]
         for did in sorted(registry.devices):
             d = registry.devices[did]
             c = d.cert
@@ -247,8 +247,8 @@ def build_graph(registry: Registry, today: dt.date | None = None) -> str:
         for d in registry.devices.values():
             if d.cert and d.cert.hardware_key and d.cert.status in ("pending", "active"):
                 on_key[d.cert.hardware_key] = on_key.get(d.cert.hardware_key, 0) + 1
-        out += ["", "## Hardware keys", "", "| id | owner | model | uses | location | status | "
-                "device certs |", "|---|---|---|---|---|---|---|"]
+        out += ["", "## Hardware keys", "", ("| id | owner | model | uses | location | status | "
+                 "device certs |"), "|---|---|---|---|---|---|---|"]
         for kid in sorted(registry.hardware_keys):
             k = registry.hardware_keys[kid]
             out.append(f"| {_cell(kid)} | {_cell(k.owner)} | {_cell(k.model)} | "

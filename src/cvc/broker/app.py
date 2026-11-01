@@ -104,7 +104,7 @@ def _acl() -> Acl:
         return Acl.load(_cfg().broker_acl)
     except FileNotFoundError:
         return Acl({})
-    except Exception:
+    except Exception:  # noqa: BLE001 - any load failure is logged and treated as fail-closed
         _log.error(
             "acl_load_failed",
             extra={"path": _cfg().broker_acl},
@@ -266,7 +266,7 @@ def _vault_ready() -> tuple[bool, str]:
         ready, detail = False, "vault-unreachable"
     except (json.JSONDecodeError, TypeError, AttributeError):
         ready, detail = False, "status-unparseable"
-    except Exception:
+    except Exception:  # noqa: BLE001 - probe must never 500
         # A readiness probe must never return a 500 — map anything unexpected
         # (never the session key, server URL, or vault contents) to a fixed token.
         ready, detail = False, "probe-failed"
@@ -319,7 +319,7 @@ def readyz() -> JSONResponse:
 def audit_verify(
     x_agent_id: str = Header(..., max_length=64, description="Calling agent's id."),
     authorization: str = Header(..., description="Bearer <agent service token>."),
-    acl: Acl = Depends(_acl),
+    acl: Acl = Depends(_acl),  # noqa: B008 - FastAPI dependency-injection idiom
 ) -> dict:
     """Recompute the audit hash chain; `intact: false` means the log was altered/truncated."""
     if not authorization.startswith("Bearer "):
@@ -336,9 +336,9 @@ def fetch_credential(
     req: FetchRequest,
     x_agent_id: str = Header(..., max_length=64, description="Calling agent's id."),
     authorization: str = Header(..., description="Bearer <agent service token>."),
-    acl: Acl = Depends(_acl),
-    audit: AuditLog = Depends(_audit),
-    bw: BwClient = Depends(_bw),
+    acl: Acl = Depends(_acl),  # noqa: B008 - FastAPI dependency-injection idiom
+    audit: AuditLog = Depends(_audit),  # noqa: B008 - FastAPI dependency-injection idiom
+    bw: BwClient = Depends(_bw),  # noqa: B008 - FastAPI dependency-injection idiom
 ) -> JSONResponse:
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=400, detail="Authorization header must use Bearer scheme")
@@ -393,9 +393,9 @@ def trigger_backup(
     req: TriggerRequest,
     x_agent_id: str = Header(..., max_length=64, description="Calling agent's id."),
     authorization: str = Header(..., description="Bearer <agent service token>."),
-    acl: Acl = Depends(_acl),
-    audit: AuditLog = Depends(_audit),
-    cfg: config.Config = Depends(_cfg),
+    acl: Acl = Depends(_acl),  # noqa: B008 - FastAPI dependency-injection idiom
+    audit: AuditLog = Depends(_audit),  # noqa: B008 - FastAPI dependency-injection idiom
+    cfg: config.Config = Depends(_cfg),  # noqa: B008 - FastAPI dependency-injection idiom
 ) -> JSONResponse:
     """On-demand equivalent of the cvc-backup CronJob (D9).
 

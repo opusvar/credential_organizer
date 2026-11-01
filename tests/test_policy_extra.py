@@ -1,12 +1,14 @@
 """Additional policy tests — reuse-only and edge cases not in test_policy.py."""
+from datetime import UTC
+
 from cvc.reminders.policy import CredRecord, evaluate
 
 
 def _rec(item_id, name, password, age_days=None):
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
     last = None
     if age_days is not None:
-        last = datetime.now(timezone.utc) - timedelta(days=age_days)
+        last = datetime.now(UTC) - timedelta(days=age_days)
     return CredRecord(item_id=item_id, name=name, username="u", password=password,
                       last_rotated=last)
 
