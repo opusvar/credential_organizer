@@ -1,6 +1,6 @@
 # Licensing — what to track if cvc goes paid
 
-> Status: **tracking in place, project license DECISION PENDING (Nathan).**
+> Status: **tracking in place, project license DECISION PENDING (owner).**
 > This repo has no LICENSE file on purpose. Until one is added, cvc is "all rights
 > reserved" by default. Not legal advice; get a lawyer to review before selling.
 
@@ -92,7 +92,7 @@ YAML + audit pattern as `cvc.access`). Proposed record:
 Enforcement should degrade gracefully (read-only / no new devices) — never lock a user
 out of their own credentials, especially the estate/takeover flows.
 
-## 5. Project license options — DECISION PENDING (Nathan)
+## 5. Project license options — DECISION PENDING (owner)
 
 | Option | What it means | Pros | Cons |
 |---|---|---|---|
