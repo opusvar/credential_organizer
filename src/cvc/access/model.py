@@ -98,7 +98,7 @@ class Principal:
         return "agents" if isinstance(self, Agent) else "machines"
 
     def active(self, today: dt.date | None = None) -> bool:
-        today = today or dt.date.today()
+        today = today or dt.datetime.now().astimezone().date()
         return self.expires is None or today <= self.expires
 
 

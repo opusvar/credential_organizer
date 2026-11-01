@@ -17,7 +17,7 @@ class Finding:
 
 
 def check_registry(registry: Registry, today: dt.date | None = None) -> list[Finding]:
-    today = today or dt.date.today()
+    today = today or dt.datetime.now().astimezone().date()
     out: list[Finding] = []
     used: set[str] = set()
     for p in registry.principals():

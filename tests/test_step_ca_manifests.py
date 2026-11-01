@@ -82,7 +82,7 @@ def _hours(s):
 
 def test_template_never_uses_csr_sans():
     t = (D / "templates" / "device-leaf.tpl").read_text()
-    body = re.sub(r"\{\{-?\s*/\*.*?\*/\s*-?\}\}", "", t, flags=re.S)
+    body = re.sub(r"\{\{-?\s*/\*.*?\*/\s*-?\}\}", "", t, flags=re.DOTALL)
     for bad in (".SANs", ".Insecure", ".Subject"):
         assert bad not in body
     for u in ("urn:cvc:person:", "urn:cvc:device:", "urn:cvc:tier:"):
