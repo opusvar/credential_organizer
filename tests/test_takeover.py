@@ -46,7 +46,7 @@ class PKI:
         self.root = _cert("root", self.rk, "root", self.rk, True)
         self.inter = _cert("inter", self.ik, "root", self.rk, True)
 
-    def leaf(self, tier="owner", person="nathan", signer=None, days=365):
+    def leaf(self, tier="owner", person="alex", signer=None, days=365):
         k = ec.generate_private_key(ec.SECP256R1())
         ik = signer or self.ik
         return _cert("dev", k, "inter", ik, False,
@@ -145,22 +145,22 @@ def registry(leaf_fp):
         "systems": {"workers": {"kind": "http"}},
         "roles": {"home-services": {"grants": [{"system": "workers", "paths": ["/"]}]}},
         "people": {
-            "nathan": {"email": "nathan@local", "tier": "owner"},
-            "dana": {"email": "dana@local", "tier": "owner", "granted_by": "nathan",
+            "alex": {"email": "alex@local", "tier": "owner"},
+            "dana": {"email": "dana@local", "tier": "owner", "granted_by": "alex",
                      "name": "Dana Smith"},
-            "erin": {"email": "erin@local", "tier": "owner", "granted_by": "nathan"},
+            "erin": {"email": "erin@local", "tier": "owner", "granted_by": "alex"},
             "alice": {"email": "alice@local", "tier": "medium", "granted_by": "dana"},
         },
         "agents": {"dana-assistant": {"tier": "assistant", "owner": "dana",
                                       "token_sha256": "cd" * 32, "roles": ["home-services"]}},
-        "hardware_keys": {"yk-nathan": key("nathan", 111), "yk-dana": key("dana", 333),
+        "hardware_keys": {"yk-alex": key("alex", 111), "yk-dana": key("dana", 333),
                           "yk-dana-backup": key("dana", 334), "yk-alice": key("alice", 222),
                           "yk-erin": key("erin", 444), "yk-dana-susp": key("dana", 336, "suspended"),
                           "yk-dana-lost": key("dana", 337, "lost"),
                           "yk-dana-old": key("dana", 335, "revoked")},
         "devices": {
-            "nathan-mac": {"owner": "nathan", "kind": "laptop", "roles": ["home-services"],
-                           "cert": {"storage": "yubikey-piv", "hardware_key": "yk-nathan",
+            "alex-mac": {"owner": "alex", "kind": "laptop", "roles": ["home-services"],
+                           "cert": {"storage": "yubikey-piv", "hardware_key": "yk-alex",
                                     "serial": "beef", "fingerprint_sha256": leaf_fp,
                                     "not_after": dt.date(2027, 10, 1), "status": "active"}},
             "dana-mac": {"owner": "dana", "kind": "laptop", "roles": ["home-services"],
@@ -198,7 +198,7 @@ class Env:
                confirm="Dana Smith"):
         w = flow.StartWizard(self.deps)
         steps = [
-            lambda: w.step1_cert("nathan", self.pem(leaf or self.leaf),
+            lambda: w.step1_cert("alex", self.pem(leaf or self.leaf),
                                  [self.pem(self.pki.inter)], self.pem(self.pki.root)),
             lambda: (setattr(self.reader, "serial", "111"), w.step2_initiator_key()),
             lambda: w.step3_elevate(Elev()),
@@ -237,11 +237,11 @@ def test_full_key_path(env):
     lines = []
     flow.complete(env.deps, rec.id, Inventory(), ex, out=lines.append)
     data = env.load()
-    assert data["hardware_keys"]["yk-dana"]["owner"] == "nathan"
-    assert data["hardware_keys"]["yk-dana-backup"]["owner"] == "nathan"
+    assert data["hardware_keys"]["yk-dana"]["owner"] == "alex"
+    assert data["hardware_keys"]["yk-dana-backup"]["owner"] == "alex"
     assert data["devices"]["dana-mac"]["cert"]["status"] == "revoked"
     assert data["people"]["dana"]["status"] == "taken-over"
-    assert data["people"]["alice"]["granted_by"] == "nathan"
+    assert data["people"]["alice"]["granted_by"] == "alex"
     assert "dana-assistant" not in data["agents"]
     assert ("takeover", "g-take") in env.vw.calls
     assert any("step ca revoke cafe" in x for x in lines)
@@ -261,7 +261,7 @@ def test_rebind_agents(env):
     env.clock.days(90)
     env.reader.serial = "111"
     flow.complete(env.deps, rec.id, Inventory(), None, rebind_agents=True, out=lambda _: None)
-    assert env.load()["agents"]["dana-assistant"]["owner"] == "nathan"
+    assert env.load()["agents"]["dana-assistant"]["owner"] == "alex"
 
 
 def test_recovery_password_path(env):
@@ -324,7 +324,7 @@ def test_banner_api(env):
     b = c.get("/v1/takeover/banner", params={"person": "dana"}).json()
     assert b["active"] and b["takeovers"][0]["state"] == "takeover request in progress"
     assert b["takeovers"][0]["path"] == "key"
-    assert not c.get("/v1/takeover/banner", params={"person": "nathan"}).json()["active"]
+    assert not c.get("/v1/takeover/banner", params={"person": "alex"}).json()["active"]
 
 
 def test_cancel_by_target(env):
@@ -357,14 +357,14 @@ def test_cert_untrusted_chain(env):
 
 
 def test_cert_revoked_in_registry(env):
-    env.data["devices"]["nathan-mac"]["cert"]["status"] = "revoked"
+    env.data["devices"]["alex-mac"]["cert"]["status"] = "revoked"
     env.save()
     with pytest.raises(TakeoverError, match="revoked"):
         env.wizard(1)
 
 
 def test_cert_expired_in_registry(env):
-    env.data["devices"]["nathan-mac"]["cert"]["not_after"] = dt.date(2026, 10, 1)
+    env.data["devices"]["alex-mac"]["cert"]["not_after"] = dt.date(2026, 10, 1)
     env.save()
     with pytest.raises(TakeoverError, match="expired"):
         env.wizard(1)
@@ -403,7 +403,7 @@ def test_steps_out_of_order(env):
 
 def test_same_person(env):
     with pytest.raises(TakeoverError, match="same person"):
-        env.wizard(4, target="nathan")
+        env.wizard(4, target="alex")
 
 
 def test_target_not_owner(env):
@@ -412,7 +412,7 @@ def test_target_not_owner(env):
 
 
 def test_target_key_wrong_owner(env):
-    with pytest.raises(TakeoverError, match="registered to 'nathan'"):
+    with pytest.raises(TakeoverError, match="registered to 'alex'"):
         env.wizard(5, target_serial="111")
 
 
@@ -464,7 +464,7 @@ def test_cancel_by_non_target(env, serial):
 def test_guard_violation_direct(env):
     _, rec = env.wizard()
     data = env.load()
-    data["people"]["nathan"]["tier"] = "medium"
+    data["people"]["alex"]["tier"] = "medium"
     data["people"]["erin"]["tier"] = "medium"
     with pytest.raises(Exception, match="zero active owner hardware keys"):
         flow.apply_account_takeover(data, rec, dt.date(2027, 1, 30), False)
@@ -478,7 +478,7 @@ def test_history_tamper_detected(env):
 
 
 def test_plan_org_items_not_copied():
-    steps = build_plan(Inventory().items_for("dana"), "dana", "nathan")
+    steps = build_plan(Inventory().items_for("dana"), "dana", "alex")
     assert [(s.action, s.ref) for s in steps] == [("copy-to-initiator", "i1"),
                                                   ("transfer-org-ownership", "org-home")]
 
@@ -518,7 +518,7 @@ def test_target_cancel_recorded(env):
 
 
 def test_no_counter_takeover(env):
-    env.wizard()                                               # nathan -> dana
+    env.wizard()                                               # alex -> dana
     w = flow.StartWizard(env.deps)
     env.data = env.load()
     leaf = env.pki.leaf(person="dana")
@@ -529,7 +529,7 @@ def test_no_counter_takeover(env):
 
 
 def test_one_active_takeover_per_target_other_initiator(env):
-    env.wizard()                                               # nathan -> dana
+    env.wizard()                                               # alex -> dana
     env.data = env.load()
     leaf = env.pki.leaf(person="erin")
     env.data["devices"]["erin-mac"] = {
@@ -552,18 +552,18 @@ def test_initiator_loss_voids(env, change):
     _, rec = env.wizard()
     env.data = env.load()
     if change == "remove":
-        del env.data["people"]["nathan"]
+        del env.data["people"]["alex"]
     elif change == "taken-over":
-        env.data["people"]["nathan"]["status"] = "taken-over"
+        env.data["people"]["alex"]["status"] = "taken-over"
     else:
-        env.data["people"]["nathan"]["tier"] = "medium"
+        env.data["people"]["alex"]["tier"] = "medium"
     env.save()
     env.clock.days(90)
     env.reader.serial = "111"
     with pytest.raises(TakeoverError, match="voided"):
         flow.complete(env.deps, rec.id, Inventory(), out=lambda _: None)
     r = env.store.get(rec.id)
-    assert r.status == "voided" and "nathan" in r.voided_reason
+    assert r.status == "voided" and "alex" in r.voided_reason
     assert ("reject", "g-take") in env.vw.calls
     assert ("takeover", "g-take") not in env.vw.calls
 
@@ -571,7 +571,7 @@ def test_initiator_loss_voids(env, change):
 def test_tick_voids(env):
     _, rec = env.wizard()
     env.data = env.load()
-    env.data["people"]["nathan"]["tier"] = "medium"
+    env.data["people"]["alex"]["tier"] = "medium"
     env.save()
     env.clock.days(7)
     assert flow.tick(env.deps) == []
@@ -643,7 +643,7 @@ def test_summary_requires_step5(env):
         w.summary()
 
 
-@pytest.mark.parametrize("typed", ["dana", "Dana", "", "Nathan"])
+@pytest.mark.parametrize("typed", ["dana", "Dana", "", "Robin"])
 def test_typed_confirmation_required(env, typed):
     with pytest.raises(TakeoverError, match="confirmation"):
         env.wizard(confirm=typed)
@@ -667,11 +667,11 @@ def test_status_indicator_api(env):
     app.include_router(make_router(env.store, env.clock))
     c = TestClient(app)
     env.clock.days(10)
-    it = c.get("/v1/takeover/status", params={"initiator": "nathan"}).json()["items"][0]
+    it = c.get("/v1/takeover/status", params={"initiator": "alex"}).json()["items"][0]
     assert it["icon"] == "hourglass" and it["faq"] == "/v1/takeover/faq"
     assert it["text"] == "You are taking over Dana Smith's account. 80 days left"
     env.clock.days(90)
-    it = c.get("/v1/takeover/status", params={"initiator": "nathan"}).json()["items"][0]
+    it = c.get("/v1/takeover/status", params={"initiator": "alex"}).json()["items"][0]
     assert it["text"] == "You are taking over Dana Smith's account. Ready to complete"
     assert not c.get("/v1/takeover/status", params={"initiator": "dana"}).json()["active"]
 
@@ -681,7 +681,7 @@ def test_status_cli(env, capsys, monkeypatch):
     env.wizard()
     monkeypatch.setattr(cli, "utcnow", lambda: T0 + timedelta(days=30, hours=1))
     assert cli.main(["takeover", "--registry", str(env.reg), "--state-dir", str(env.store.dir),
-                     "status", "--initiator", "nathan"]) == 0
+                     "status", "--initiator", "alex"]) == 0
     assert "[hourglass] You are taking over Dana Smith's account. 60 days left" in (
         capsys.readouterr().out)
     assert cli.main(["--state-dir", str(env.store.dir), "faq"]) == 0

@@ -12,13 +12,19 @@ values are prompted for.
 | (default) | Print commands and plans. The registry is written only after you type the person/agent id to confirm. Review files go to `--out-dir` (default `onboard-out/`). |
 | `--execute` (person only) | Run the step-ca commands, but only if `step` is on PATH. Make the Authentik API calls, but only if `AUTHENTIK_URL` and `AUTHENTIK_TOKEN` are set. |
 
+Site-specific values (step-ca URL, services-node IP, base domain, default owner ids for
+`cvc-access ... --owner/--granted-by` and `python -m cvc.tailnet policy --owner`) come from
+the site config, not from code. See [SITE-CONFIG.md](SITE-CONFIG.md). With no
+`default_owner_ids` set, those flags are required. The `deploy/...` scripts the wizard prints
+must be run from a copy rendered with `cvc-site render-deploy`.
+
 The wizard never calls the Tailscale API. Generated files (tailnet policy, tiergate
 ConfigMap) are written for you to review, and nothing applies them.
 
 ## `cvc onboard person`
 
 ```
-cvc onboard person --id alice --name "Alice A" --tier medium --granted-by nathan \
+cvc onboard person --id alice --name "Alice A" --tier medium --granted-by alex \
   --email alice@example.com --device alice-pixel:phone --device alice-mbp:laptop --dry-run
 ```
 
@@ -55,7 +61,7 @@ As with `cvc-access` edits, writing the registry keeps key order but drops YAML 
 ## `cvc onboard agent`
 
 ```
-cvc onboard agent --id helper --tier low --sponsor sam --granted-by nathan --role readmq --dry-run
+cvc onboard agent --id helper --tier low --sponsor sam --granted-by alex --role readmq --dry-run
 ```
 
 The agent is placed on tailnet `agents`. The roles must exist. Each grant is classified against the D16

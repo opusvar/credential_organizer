@@ -1,6 +1,6 @@
 # Access Classification — agents, credentials, systems
 
-**Status:** Approved by Nathan, 2026-11-01 (decision D16). Policy document.
+**Status:** Approved by the owner, 2026-11-01 (decision D16). Policy document.
 Builds on D12 (access registry: roles for agents and machines) and D13 (human devices).
 
 Every access decision is set by two things: **how sensitive the data is** and **what the
@@ -89,7 +89,7 @@ effective(agent, level, action) =
 - **Ceilings cap. Grants enable.** A role grant can never lift an agent above `min(...)`. An
   agent with no grant for a system has no access to it, even if its ceiling would allow it.
 - When "A" and "P" combine, P wins. When either side is "D", the result is D.
-- The human principal's ceiling is their D12/D13 role. The owner (Nathan) has the full matrix
+- The human principal's ceiling is their D12/D13 role. The owner has the full matrix
   including secret.
 
 ### 3.2 Secret: never a standing grant
@@ -136,7 +136,7 @@ mode.
 ### medium (e.g. an email-triage agent, task planner)
 | Allowed | Denied / approval |
 |---------|------------------|
-| Read Nathan's email to summarize it (private read) | Send an email externally: P |
+| Read the owner's email to summarize it (private read) | Send an email externally: P |
 | Create ltaskq tasks and notes (internal write) | Delete emails: P (act) |
 | Use a granted ordinary credential (e.g. a news-site login) via broker | Read Vaultwarden master/admin token: D |
 | Search personal documents for one topic | Turn on a heater via HA: P |
@@ -150,12 +150,12 @@ mode.
 | Write and reprioritize ltaskq tasks across workers | Read the step-ca root key: D (only §3.2 single-use fetch, with approval) |
 | Read private calendars to schedule work | Delete files in `data/`: P |
 
-### assistant (e.g. Nathan's personal assistant agent)
+### assistant (e.g. the owner's personal assistant agent)
 | Allowed | Denied / approval |
 |---------|------------------|
-| Read Nathan's calendar and email | Send a reply to an external address: P |
+| Read the owner's calendar and email | Send a reply to an external address: P |
 | Draft (not send) an email in Drafts | Place an order or payment: P |
-| Create reminder tasks in ltaskq | See Nathan's YubiKey PIN or recovery codes: D, even with Nathan's tier |
+| Create reminder tasks in ltaskq | See the owner's YubiKey PIN or recovery codes: D, even with the owner's tier |
 | Read HA presence and sensor state | Delegate work to other agents: D |
 | | Operate above medium because the owner is the principal: D (capped) |
 
@@ -216,7 +216,7 @@ Examples:
   public search and read the Calibre catalogue. It is revoked when the guest Wi-Fi/tailnet
   access ends.
 - A family member's homework helper, tier assistant, sponsor = family member (medium):
-  it reads that person's calendar and creates tasks. It cannot read Nathan's email, and
+  it reads that person's calendar and creates tasks. It cannot read the owner's email, and
   sending messages needs the sponsor's approval.
 - A family member asks for a high orchestrator: denied. Family sponsorship caps at medium.
   Only an owner-sponsored agent can be high, and only with owner approval.

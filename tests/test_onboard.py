@@ -42,13 +42,13 @@ def base() -> dict:
                                    "action": "read"}]},
         },
         "people": {
-            "nathan": {"email": "nathan@local", "tier": "owner", "tailnet": "owner"},
+            "alex": {"email": "alex@local", "tier": "owner", "tailnet": "owner"},
             "kate": {"email": "kate@local", "tier": "owner", "tailnet": "owner"},
-            "sam": {"tier": "medium", "tailnet": "family", "granted_by": "nathan"},
+            "sam": {"tier": "medium", "tailnet": "family", "granted_by": "alex"},
         },
         "resources": {"books": {"name": "Books", "host": "books.x", "kind": "library",
                                 "min_tier": "guest-long"}},
-        "hardware_keys": {"yk1": {"owner": "nathan", "model": "YK5", "serial": 1,
+        "hardware_keys": {"yk1": {"owner": "alex", "model": "YK5", "serial": 1,
                                   "uses": ["recovery"], "location": "on-person",
                                   "status": "active", "role": "primary"}},
     }
@@ -76,7 +76,7 @@ class FakeRunner:
 
 
 def person(**kw) -> PersonSpec:
-    d = {"id": "alice", "name": "Alice A", "tier": "medium", "granted_by": "nathan",
+    d = {"id": "alice", "name": "Alice A", "tier": "medium", "granted_by": "alex",
              "email": "alice@local"}
     d.update(kw)
     return PersonSpec(**d)
@@ -104,7 +104,7 @@ def test_dry_run_cli_agent(reg):
     before = reg.read_text()
     io = IO(answers=[])
     rc = cli.main(["agent", "--registry", str(reg), "--id", "bot", "--tier", "low",
-                   "--sponsor", "nathan", "--granted-by", "nathan", "--role", "readmq",
+                   "--sponsor", "alex", "--granted-by", "alex", "--role", "readmq",
                    "--dry-run"], io=io, seams=Seams(io=io, today=TODAY))
     assert rc == 0 and reg.read_text() == before
 
@@ -116,7 +116,7 @@ def test_write_person_after_confirmation(reg, tmp_path):
     onboard_person(reg, person(), s, out_dir=tmp_path / "o")
     r = load_registry(reg)
     p = r.people["alice"]
-    assert (p.tier, p.tailnet, p.granted_by) == ("medium", "family", "nathan")
+    assert (p.tier, p.tailnet, p.granted_by) == ("medium", "family", "alex")
     assert p.name == "Alice A" and p.history[0]["via"] == "cvc onboard"
     assert "display_name" not in p.history[0]
     assert (tmp_path / "o" / "tiergate-configmap.yaml").exists()
@@ -274,7 +274,7 @@ def test_tailscale_family_share_and_policy_file(reg, tmp_path):
     onboard_person(reg, person(), s, out_dir=tmp_path)
     assert "joins the 'family' tailnet" in s.io.text
     pol = (tmp_path / "tailnet-policy.hujson").read_text()
-    assert "nathan@local" in pol and "kate@local" in pol and "alice@local" not in pol
+    assert "alex@local" in pol and "kate@local" in pol and "alice@local" not in pol
 
 
 def test_tailscale_owner_in_policy(reg, tmp_path):
@@ -349,7 +349,7 @@ def test_owner_emergency_access_checklist(reg, tmp_path):
     s = seams()
     onboard_person(reg, person(tier="owner"), s, out_dir=tmp_path, dry_run=True)
     t = s.io.text
-    for o in ("nathan", "kate"):
+    for o in ("alex", "kate"):
         for kind, days in (("View", 15), ("Takeover", 90), ("Takeover", 180)):
             assert f"alice -> {o}: Emergency Access {kind}, wait {days} days" in t
             assert f"{o} -> alice: Emergency Access {kind}, wait {days} days" in t
@@ -365,7 +365,7 @@ def test_owner_step_skipped_for_non_owner(reg, tmp_path):
 # ── agent ───────────────────────────────────────────────────────────────────
 
 def agent(**kw) -> AgentSpec:
-    d = {"id": "bot", "tier": "low", "sponsor": "nathan", "granted_by": "nathan", "roles": ["readmq"]}
+    d = {"id": "bot", "tier": "low", "sponsor": "alex", "granted_by": "alex", "roles": ["readmq"]}
     d.update(kw)
     return AgentSpec(**d)
 
@@ -374,7 +374,7 @@ def test_agent_written(reg):
     s = seams(answers=["bot"])
     onboard_agent(reg, agent(token_sha256="a" * 64), s)
     a = load_registry(reg).agents["bot"]
-    assert (a.tier, a.tailnet, a.sponsor, a.roles) == ("low", "agents", "nathan", ("readmq",))
+    assert (a.tier, a.tailnet, a.sponsor, a.roles) == ("low", "agents", "alex", ("readmq",))
     assert "readmq -> mq [internal/read]" in s.io.text
 
 
@@ -401,7 +401,7 @@ def test_agent_refusals(reg, kw, msg):
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
 def test_cli_prompts_for_missing_and_parses_devices(reg, tmp_path):
-    io = IO(answers=["alice", "Alice A", "nathan", "alice"])
+    io = IO(answers=["alice", "Alice A", "alex", "alice"])
     rc = cli.main(["person", "--registry", str(reg), "--tier", "medium",
                    "--device", "pix:phone", "--device", "mbp:laptop:p12",
                    "--out-dir", str(tmp_path)], io=io, seams=Seams(io=io, today=TODAY))

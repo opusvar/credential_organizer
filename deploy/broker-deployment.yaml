@@ -1,7 +1,7 @@
 ---
 # cvc credential broker — k3s Deployment
 #
-# Binds hostPort 8710 to Tailscale IP (100.106.97.34) via hostIP.
+# Binds hostPort 8710 to Tailscale IP (${SITE_NODE_IP}) via hostIP.
 # The broker itself binds 0.0.0.0 INSIDE the pod netns — the Tailscale IP
 # does not exist in the pod's network namespace, only on the host's tailscale0.
 # hostIP on the portmap rule is what restricts access to the Tailscale interface.
@@ -11,7 +11,7 @@
 #
 #   # Agent account creds (Vaultwarden dedicated agent account — NOT personal vault):
 #   kubectl -n cvc create secret generic cvc-broker-vault \
-#     --from-literal=BW_SERVER=https://orangepi6.humpback-krait.ts.net:8443/vault \
+#     --from-literal=BW_SERVER=${SITE_VAULT_URL} \
 #     --from-literal=BW_CLIENTID=<agent account client id> \
 #     --from-literal=BW_CLIENTSECRET=<agent account client secret> \
 #     --from-literal=BW_PASSWORD=<agent account master password>
@@ -54,9 +54,9 @@ spec:
         app: cvc-broker
     spec:
       hostAliases:
-        - ip: "100.106.97.34"
+        - ip: "${SITE_NODE_IP}"
           hostnames:
-            - "orangepi6.humpback-krait.ts.net"
+            - "${SITE_BASE_DOMAIN}"
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000       # matches `useradd -m -u 1000 cvc` in the Dockerfile
@@ -101,7 +101,7 @@ spec:
           ports:
             - containerPort: 8710
               hostPort: 8710
-              hostIP: "100.106.97.34"   # restricts CNI portmap to Tailscale interface
+              hostIP: "${SITE_NODE_IP}"   # restricts CNI portmap to Tailscale interface
               protocol: TCP
           env:
             - name: BROKER_BIND

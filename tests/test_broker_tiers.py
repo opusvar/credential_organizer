@@ -28,7 +28,7 @@ def _acl_data():
         "plain": {"token_sha256": _sha("t-plain"), "allow": allow},
         "hi": {"token_sha256": _sha("t-hi"), "tier": "high", "allow": allow},
         "asst": {"token_sha256": _sha("t-asst"), "tier": "assistant",
-                 "on_behalf_of": "nathan", "allow": allow},
+                 "on_behalf_of": "alex", "allow": allow},
         "asst-noobo": {"token_sha256": _sha("t-x"), "tier": "assistant", "allow": allow},
     }}
 
@@ -120,10 +120,10 @@ def test_high_tier_physical_requires_approval(env):
     aid = r.json()["id"]
     assert _fetch(client, "hi", "t-hi", C2, **{"X-Approval-Id": aid}).status_code == 403
 
-    bad = client.post(f"/v1/approvals/{aid}/approve", json={"approver": "nathan"},
+    bad = client.post(f"/v1/approvals/{aid}/approve", json={"approver": "alex"},
                       headers={"X-Approver-Token": "wrong"})
     assert bad.status_code == 401
-    ok = client.post(f"/v1/approvals/{aid}/approve", json={"approver": "nathan"},
+    ok = client.post(f"/v1/approvals/{aid}/approve", json={"approver": "alex"},
                      headers={"X-Approver-Token": "human"})
     assert ok.status_code == 200 and ok.json()["status"] == "approved"
 
@@ -168,7 +168,7 @@ def test_assistant_dual_attribution(env):
     assert _fetch(client, "asst", "t-asst", "44444444-4444-4444-4444-444444444444"
                   ).status_code == 403
     recs = _records(path)
-    assert all(r["agent"] == "asst" and r["on_behalf_of"] == "nathan" for r in recs)
+    assert all(r["agent"] == "asst" and r["on_behalf_of"] == "alex" for r in recs)
     assert audit.verify()
     assert SECRET not in path.read_text()
 
@@ -181,10 +181,10 @@ def test_assistant_without_obo_denied(env):
 def test_audit_obo_tamper_detected(tmp_path):
     log = AuditLog(str(tmp_path / "a.jsonl"))
     log.record(AuditEvent(agent="a", credential="c", purpose="p", outcome="allow",
-                          on_behalf_of="nathan"))
+                          on_behalf_of="alex"))
     assert log.verify()
     p = tmp_path / "a.jsonl"
-    p.write_text(p.read_text().replace("nathan", "mallory"))
+    p.write_text(p.read_text().replace("alex", "mallory"))
     assert not log.verify()
 
 

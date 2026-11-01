@@ -1,6 +1,6 @@
 # Voluntary Delegation
 
-**Status:** Approved by Nathan, 2026-11-01 (decision D17). Design only; no code yet.
+**Status:** Approved by the owner, 2026-11-01 (decision D17). Design only; no code yet.
 Related: D14 (at least one active owner YubiKey), D16 / [ACCESS-CLASSIFICATION.md](ACCESS-CLASSIFICATION.md)
 (tier ceilings), takeover flow (execution machinery reused).
 

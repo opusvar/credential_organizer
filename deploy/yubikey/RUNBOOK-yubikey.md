@@ -8,7 +8,7 @@ Primary lives on your person; backup lives in the home safe. Enroll both before 
 
 1. On the Mac: `brew install ykman`, attach ONE key, run `./enroll-mac.sh primary`. Repeat with the other key: `./enroll-mac.sh backup`.
 2. Change PIV PIN, PUK and management key when prompted; store them in Vaultwarden.
-3. In Vaultwarden (https://orangepi6.humpback-krait.ts.net:8443/vault): Account settings > Security > Two-step login > FIDO2 WebAuthn. Register BOTH keys.
+3. In Vaultwarden (<vault_url>): Account settings > Security > Two-step login > FIDO2 WebAuthn. Register BOTH keys.
 4. Run the printed `cvc-access hwkey enroll ...` on the OPi for each key (location: `on-person` / `home-safe`).
 5. Get device certs with `issue-device-cert.sh <key-id>` (placeholder; see deploy/step-ca/README.md).
 6. Put the backup key in the safe. Test that each key alone can log in to Vaultwarden.

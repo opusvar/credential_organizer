@@ -5,9 +5,9 @@ import argparse
 import sys
 from pathlib import Path
 
+from cvc import site as site_config
 from cvc.access.model import RegistryError, load_registry
 from cvc.deploygen.traefik import (
-    DEFAULT_BASE_DOMAIN,
     DEFAULT_ENTRYPOINT,
     DEFAULT_NAMESPACE,
     Options,
@@ -29,7 +29,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="cvc-deploygen", description=__doc__)
     ap.add_argument("what", choices=sorted(BUILDS))
     ap.add_argument("--registry", default="access/registry.yaml")
-    ap.add_argument("--base-domain", default=DEFAULT_BASE_DOMAIN)
+    ap.add_argument("--base-domain", help="default: site base_domain")
+    site_config.add_site_arg(ap)
     ap.add_argument("--namespace", default=DEFAULT_NAMESPACE)
     ap.add_argument("--entrypoint", action="append", dest="entrypoints",
                     help=f"Traefik entrypoint (repeatable; default {DEFAULT_ENTRYPOINT})")
@@ -39,7 +40,12 @@ def main(argv: list[str] | None = None) -> int:
                     help="use each resource's registry host instead of <id>.<base-domain>")
     ap.add_argument("-o", "--out", help="write to file instead of stdout")
     a = ap.parse_args(argv)
-    opts = Options(base_domain=a.base_domain, namespace=a.namespace,
+    try:
+        base_domain = a.base_domain or site_config.load(a.site).base_domain
+    except site_config.SiteError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    opts = Options(base_domain=base_domain, namespace=a.namespace,
                    entrypoints=tuple(a.entrypoints or [DEFAULT_ENTRYPOINT]),
                    host_overrides=dict(a.host), registry_hosts=a.registry_hosts)
     try:

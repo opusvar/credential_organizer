@@ -26,8 +26,8 @@ def base() -> dict:
             "c": {"grants": [{"system": "web"}]},
         },
         "people": {
-            "nathan": {"tier": "owner", "tailnet": "owner"},
-            "admin1": {"tier": "admin", "tailnet": "family", "granted_by": "nathan"},
+            "alex": {"tier": "owner", "tailnet": "owner"},
+            "admin1": {"tier": "admin", "tailnet": "family", "granted_by": "alex"},
             "kid": {"tier": "low", "tailnet": "family", "granted_by": "admin1"},
         },
         "agents": {},
@@ -92,9 +92,9 @@ def test_guest_tailnet_mismatch():
     ("admin1", "medium", True),
     ("admin1", "high", False),       # owner-only
     ("admin1", "admin", False),
-    ("nathan", "high", True),
-    ("nathan", "admin", True),
-    ("nathan", "owner", True),
+    ("alex", "high", True),
+    ("alex", "admin", True),
+    ("alex", "owner", True),
     ("kid", "guest-long", True),     # low(3) - guest-long(1) = 2
     ("kid", "media-only", False),    # only 1 above
 ])
@@ -119,7 +119,7 @@ def test_assistant_binding_and_cap():
     d["agents"]["asst"] = {"tier": "assistant"}
     assert any("bind to one person" in e for e in errors(d))
     # bound to owner: capped at medium, so an admin may grant it
-    d["agents"]["asst"] = {"tier": "assistant", "owner": "nathan", "granted_by": "admin1"}
+    d["agents"]["asst"] = {"tier": "assistant", "owner": "alex", "granted_by": "admin1"}
     assert errors(d) == []
     # bound to a low person: effective low; a low person can't grant it
     d["agents"]["asst"] = {"tier": "assistant", "owner": "kid", "granted_by": "kid"}

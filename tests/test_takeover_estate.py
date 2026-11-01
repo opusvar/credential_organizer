@@ -52,7 +52,7 @@ def test_veto_warns_vw_view_persists(env):
     assert "View access" in printed[0] and "PERSISTS" in printed[0]
     assert "only accepts a reject from the grantor" in printed[0]
     vetoed = [(p, m) for p, ev, m in env.notifier.sent if ev == "takeover-vetoed"]
-    assert {p for p, _ in vetoed} == {"nathan", "dana", "erin"}
+    assert {p for p, _ in vetoed} == {"alex", "dana", "erin"}
     assert all("PERSISTS" in m for _, m in vetoed)
 
 
@@ -101,7 +101,7 @@ def _kit(env):
 
 def _estate_wizard(env, kit, target="dana", name="Dana Smith"):
     w = flow.StartWizard(env.deps)
-    w.step1_cert("nathan", env.pem(env.leaf), [env.pem(env.pki.inter)], env.pem(env.pki.root))
+    w.step1_cert("alex", env.pem(env.leaf), [env.pem(env.pki.inter)], env.pem(env.pki.root))
     env.reader.serial = "111"
     w.step2_initiator_key()
     w.step3_elevate(Elev())
@@ -113,13 +113,13 @@ def _estate_wizard(env, kit, target="dana", name="Dana Smith"):
 
 def test_estate_kit_generate_hash_only_0600(env):
     kit, _ = _kit(env)
-    code = kit.generate("nathan", "2026-11-01")
+    code = kit.generate("alex", "2026-11-01")
     raw = normalize(code)
     assert len(raw) == 30 and code.count("-") == 5
     text = kit.path.read_text()
     assert raw not in text and code not in text and '"hash"' in text
     assert stat.S_IMODE(os.stat(kit.path).st_mode) == 0o600
-    assert kit.generate("nathan", "2026-11-02") != code
+    assert kit.generate("alex", "2026-11-02") != code
 
 
 def test_estate_kit_path_180_days_notifies_all_owners_every_channel(env):
@@ -132,7 +132,7 @@ def test_estate_kit_path_180_days_notifies_all_owners_every_channel(env):
     assert rec.target_key is None and ("initiate", "g-take180") in env.vw.calls
     for ch in (a, b):
         assert {p for p, ev, _ in ch.sent if ev == "takeover-estate-kit-used"} == \
-            {"nathan", "dana", "erin"}
+            {"alex", "dana", "erin"}
     banner = [m for p, ev, m in a.sent if ev == "takeover-banner"]
     assert banner and "estate recovery kit" in banner[0]
     env.clock.days(179)
@@ -145,7 +145,7 @@ def test_estate_kit_path_180_days_notifies_all_owners_every_channel(env):
 
 def test_estate_kit_any_owner_target(env):
     kit, box = _kit(env)
-    box["code"] = kit.generate("nathan", "2026-11-01")
+    box["code"] = kit.generate("alex", "2026-11-01")
     env.vw.grants += [EmergencyGrant("e-view", "erin@local", "view", 15),
                       EmergencyGrant("e-take", "erin@local", "takeover", 180)]
     rec = _estate_wizard(env, kit, target="erin", name="erin")
@@ -156,7 +156,7 @@ def test_estate_kit_wrong_code_and_missing(env):
     kit, box = _kit(env)
     with pytest.raises(TakeoverError, match="no active estate recovery kit"):
         _estate_wizard(env, kit)
-    kit.generate("nathan", "2026-11-01")
+    kit.generate("alex", "2026-11-01")
     box["code"] = "0" * 30
     with pytest.raises(TakeoverError, match="code is wrong"):
         _estate_wizard(env, kit)
@@ -165,7 +165,7 @@ def test_estate_kit_wrong_code_and_missing(env):
 
 def test_estate_kit_not_consumed_when_start_fails(env):
     kit, box = _kit(env)
-    box["code"] = kit.generate("nathan", "2026-11-01")
+    box["code"] = kit.generate("alex", "2026-11-01")
     env.vw.grants = [g for g in env.vw.grants if g.wait_days != 180]
     with pytest.raises(TakeoverError, match="180-day wait"):
         _estate_wizard(env, kit)
@@ -188,7 +188,7 @@ def test_uri_round_trip_and_typed_forms():
 def test_scanned_uri_accepted_by_verify(env):
     from cvc.takeover.estate_sheet import build_uri
     kit, box = _kit(env)
-    box["code"] = build_uri(kit.generate("nathan", "2026-11-01"))
+    box["code"] = build_uri(kit.generate("alex", "2026-11-01"))
     assert kit.verify()
 
 
@@ -199,7 +199,7 @@ def test_sheet_pdf_0600_no_code_in_state_or_logs(env, tmp_path, capsys, caplog):
     outdir = tmp_path / "print"
     outdir.mkdir()
     lines = []
-    kit_id, path = generate_and_emit(kit, "nathan", "2026-11-01T00:00:00", outdir,
+    kit_id, path = generate_and_emit(kit, "alex", "2026-11-01T00:00:00", outdir,
                                      out=lines.append)
     assert stat.S_IMODE(os.stat(path).st_mode) == 0o600 and path.parent == outdir
     pdf = path.read_bytes()
@@ -230,7 +230,7 @@ def test_terminal_mode(env):
     from cvc.takeover.estate_sheet import generate_and_emit
     kit, _ = _kit(env)
     lines = []
-    _, path = generate_and_emit(kit, "nathan", "2026-11-01", terminal=True, out=lines.append)
+    _, path = generate_and_emit(kit, "alex", "2026-11-01", terminal=True, out=lines.append)
     assert path is None and "█" in lines[0] and "LEGACY RECOVERY CODE" in lines[1]
 
 
@@ -247,5 +247,5 @@ def test_missing_qr_lib_message(env, monkeypatch, tmp_path):
     monkeypatch.setattr(builtins, "__import__", fake)
     kit, _ = _kit(env)
     with pytest.raises(TakeoverError, match=r"pip install 'cvc\[estate\]'"):
-        generate_and_emit(kit, "nathan", "2026-11-01", tmp_path)
+        generate_and_emit(kit, "alex", "2026-11-01", tmp_path)
     assert not kit.active()                      # no kit created that nobody can print

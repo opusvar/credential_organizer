@@ -49,9 +49,9 @@ spec:
             runAsUser: 1000       # matches `useradd -m -u 1000 cvc` in the Dockerfile
             fsGroup: 1000         # makes the cvc-backups volume group-writable by uid 1000
           hostAliases:
-            - ip: "100.106.97.34"
+            - ip: "${SITE_NODE_IP}"
               hostnames:
-                - "orangepi6.humpback-krait.ts.net"
+                - "${SITE_BASE_DOMAIN}"
           containers:
             - name: cvc-backup
               image: cvc:latest

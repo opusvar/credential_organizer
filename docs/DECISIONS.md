@@ -1,6 +1,6 @@
 # Phase 0 decisions (ADR-lite)
 
-These block real implementation. Each has a status: **OPEN** (needs Nathan) / DECIDED / DEFERRED.
+These block real implementation. Each has a status: **OPEN** (needs the owner) / DECIDED / DEFERRED.
 Record the decision + date inline as they resolve.
 
 ## D1 — Authentik ↔ Vaultwarden relationship  **[DECIDED 2026-09-09]**
@@ -41,7 +41,7 @@ credentials explicitly provisioned in the agent account.
 secret `cvc-broker-vault` before deploying the broker. See broker-deployment.yaml prerequisites.
 
 ## D6 — Where services run  **[DECIDED 2026-09-09]**
-**Decision:** k3s on OPi 6 Plus (`100.106.97.34`). Broker as k3s Deployment with `hostPort: 8710`
+**Decision:** k3s on OPi 6 Plus (`<node_ip>`). Broker as k3s Deployment with `hostPort: 8710`
 bound to Tailscale IP only. nerdctl Compose rejected (CNI flakiness on routable bridges).
 Caddy rejected from broker path — see D8.
 
@@ -214,7 +214,7 @@ validates it and generates artifacts. `deploy/broker-acl.yaml` becomes generated
 bearer credentials. Losing a device meant rotating everything, and the registry had no record of
 which device held which credential.
 **Decision:** every human device gets its own client certificate from a home CA (Smallstep
-step-ca, `deploy/step-ca`). All the certs sit under one human identity (`people.nathan`).
+step-ca, `deploy/step-ca`). All the certs sit under one human identity (`people.alex`).
 - Phones get a `.p12`. Mac and Windows certs live on YubiKeys: PIV slot 9a, key generated on
   the key, with attestation. YubiKeys are also the Vaultwarden FIDO2 2FA and recovery keys (D11).
 - The registry gains `people`, `hardware_keys` and `devices`. Devices are principals and hold
@@ -290,7 +290,7 @@ Timeline from initiation:
 State lives in `~/.local/state/cvc/takeover/`: `takeovers.json` plus an append-only,
 hash-chained `history.jsonl` (`cvc takeover verify-history`).
 
-**D15 addendum: misuse protections and initiator UX** (approved by Nathan 2026-11-01):
+**D15 addendum: misuse protections and initiator UX** (approved by the owner 2026-11-01):
 - **Alerts.** The target is alerted on every channel through `MultiNotifier`
   (`CVC_TAKEOVER_WEBHOOKS`: email relay, push, Home Assistant).
   - Key path: days 0/7/14/85.
@@ -369,7 +369,7 @@ hash-chained `history.jsonl` (`cvc takeover verify-history`).
 
 ## D16 — Access classification matrix  **[DECIDED 2026-11-01]**
 Two axes (data public/internal/private/secret × action read/relay/write/act/delegate), tier ceilings (scoped/low/medium/high/assistant), effective = min(agent, sponsor) ∩ role grants, secret only via broker single-use approved fetch; guest/family are sponsors, not tiers. See [ACCESS-CLASSIFICATION.md](ACCESS-CLASSIFICATION.md).
-Sponsored guest and family agents are not separate tiers: they use the agent tier ladder plus a `sponsor` (human) attribute (approved by Nathan).
+Sponsored guest and family agents are not separate tiers: they use the agent tier ladder plus a `sponsor` (human) attribute (approved by the owner).
 
 ## D17 — Voluntary delegation  **[DECIDED 2026-11-01]**
 `cvc delegate start` wizard: strong identity, itemised preview (items above the recipient ceiling are revoked, never escalated), 48h revoke window, then execution via the takeover-completion machinery with the D14 owner-key guard. See [DELEGATION.md](DELEGATION.md).

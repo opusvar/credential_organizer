@@ -17,7 +17,7 @@
 #   fetch it through the broker.
 #
 # Profile isolation:
-#   Nathan's own `bw` login state may already exist on this host. To avoid clobbering
+#   the owner's own `bw` login state may already exist on this host. To avoid clobbering
 #   it, every `bw` call in this script runs against a private, throwaway app-data dir
 #   created with mktemp -d and pointed to via BITWARDENCLI_APPDATA_DIR. That variable
 #   is what actually isolates the CLI's session/profile state — HOME is left
@@ -218,7 +218,7 @@ export BW_CLIENTSECRET="${SECRET_VALS[BW_CLIENTSECRET]}"
 export BW_PASSWORD="${SECRET_VALS[BW_PASSWORD]}"
 unset SECRET_VALS
 
-# ── isolated bw profile (never touches Nathan's own bw login state) ──────────
+# ── isolated bw profile (never touches the owner's own bw login state) ──────────
 umask 077
 TMPDIR_BW="$(mktemp -d)"
 # HOME is left unchanged on purpose; BITWARDENCLI_APPDATA_DIR is what actually

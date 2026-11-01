@@ -44,17 +44,17 @@ def base() -> dict:
                                           "action": "read", "via": "broker-approved"}]},
         },
         "people": {
-            "nathan": {"tier": "owner", "tailnet": "owner"},
-            "sam": {"tier": "medium", "tailnet": "family", "granted_by": "nathan"},
-            "ada": {"tier": "admin", "tailnet": "family", "granted_by": "nathan"},
+            "alex": {"tier": "owner", "tailnet": "owner"},
+            "sam": {"tier": "medium", "tailnet": "family", "granted_by": "alex"},
+            "ada": {"tier": "admin", "tailnet": "family", "granted_by": "alex"},
             "g": {"tier": "guest-long", "tailnet": "guests", "expires": "2026-11-20",
-                  "granted_by": "nathan"},
+                  "granted_by": "alex"},
         },
         "agents": {},
     }
 
 
-def agent(d, roles, tier, sponsor="nathan", **kw):
+def agent(d, roles, tier, sponsor="alex", **kw):
     d["agents"]["a"] = {"tier": tier, "roles": roles, "sponsor": sponsor, **kw}
     return d
 
@@ -181,7 +181,7 @@ def test_guest_sponsored_capped_low():
 def test_family_sponsor_caps_at_medium():
     assert eff(agent(base(), [], "high", sponsor="ada")) == "medium"
     assert eff(agent(base(), [], "high", sponsor="sam")) == "medium"
-    assert eff(agent(base(), [], "high", sponsor="nathan")) == "high"
+    assert eff(agent(base(), [], "high", sponsor="alex")) == "high"
 
 
 def test_low_sponsor_caps_assistant():
@@ -278,7 +278,7 @@ def test_checked_out_guest_cannot_reach_resources():
 def keys_data(*roles):
     d = base()
     d["hardware_keys"] = {
-        f"k{i}": {"owner": "nathan", "model": "YK", "serial": 100 + i, "uses": ["recovery"],
+        f"k{i}": {"owner": "alex", "model": "YK", "serial": 100 + i, "uses": ["recovery"],
                   "location": loc, "status": "active", **({"role": r} if r else {})}
         for i, (r, loc) in enumerate(zip(roles, ("on-person", "home-safe", "offsite"),
                                          strict=False))}
@@ -287,7 +287,7 @@ def keys_data(*roles):
 
 def primary_errs(d):
     return [f.message for f in check_registry(parse_registry(d), TODAY)
-            if f.path == "people.nathan" and "primary" in f.message]
+            if f.path == "people.alex" and "primary" in f.message]
 
 
 def test_exactly_one_primary_required():
@@ -307,7 +307,7 @@ def test_helpers_expose_role():
     assert active_owner_keys(d) == ["k0", "k1"]
     assert active_owner_keys(d, role="primary") == ["k0"]
     assert active_owner_keys(d, role="backup") == ["k1"]
-    assert owner_primary_keys(d) == {"nathan": ["k0"]}
+    assert owner_primary_keys(d) == {"alex": ["k0"]}
 
 
 def test_enroll_assigns_role(tmp_path):
@@ -353,7 +353,7 @@ def test_example_has_no_errors():
 def test_roster_template_is_yaml_and_mentions_tiers():
     text = (ROOT / "access" / "roster.template.yaml").read_text()
     data = yaml.safe_load(text)
-    assert data["people"]["nathan"]["tier"] == "owner"
+    assert data["people"]["alex"]["tier"] == "owner"
     for t in ("guest-short", "media-only", "medium", "admin", "assistant", "scoped"):
         assert t in text
 

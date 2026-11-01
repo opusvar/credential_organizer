@@ -8,6 +8,7 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
+from cvc import site as site_config
 from cvc.access.model import RegistryError, load_registry
 from cvc.deploygen import traefik as T
 from cvc.deploygen.__main__ import main
@@ -77,7 +78,7 @@ def test_passkey_hosts_include_authentik(reg):
 def test_base_domain_switch_and_overrides(reg):
     default = _routes(_docs(T.build_traefik(reg)))
     assert default["cvc-books"]["spec"]["routes"][0]["match"] == (
-        "Host(`books.orangepi6.humpback-krait.ts.net`)")
+        "Host(`books.cvc.example.ts.net`)")
     opts = T.Options(base_domain="home.example.org.", host_overrides={"ha": "hass.example.net"})
     routes = _routes(_docs(T.build_traefik(reg, opts)))
     assert routes["cvc-books"]["spec"]["routes"][0]["match"] == "Host(`books.home.example.org`)"
@@ -87,7 +88,7 @@ def test_base_domain_switch_and_overrides(reg):
     with pytest.raises(RegistryError):
         T.resource_hosts(reg, T.Options(host_overrides={"nope": "x.y"}))
     with pytest.raises(RegistryError):
-        T.resource_hosts(reg, T.Options(host_overrides={"ha": "books.orangepi6.humpback-krait.ts.net"}))
+        T.resource_hosts(reg, T.Options(host_overrides={"ha": "books.cvc.example.ts.net"}))
 
 
 def test_tiergate_configmap_matches_routes(reg):
@@ -121,7 +122,7 @@ def test_committed_examples_up_to_date(reg):
 # --- deploy/ manifests -------------------------------------------------------------------
 
 def _file_docs(path: Path) -> list[dict]:
-    return _docs(path.read_text())
+    return _docs(site_config.render(path.read_text(), site_config.load()))  # deploy templates
 
 
 def test_all_new_deploy_manifests_parse():
@@ -179,7 +180,7 @@ def test_helmchartconfig_binds_tailscale_only():
     d = _file_docs(DEPLOY / "traefik" / "helmchartconfig-tailscale-only.yaml")[0]
     vals = yaml.safe_load(d["spec"]["valuesContent"])
     assert vals["service"]["type"] == "ClusterIP"
-    assert {p["hostIP"] for p in vals["ports"].values()} == {"100.106.97.34"}
+    assert {p["hostIP"] for p in vals["ports"].values()} == {site_config.load().node_ip}
 
 
 # --- takeover API ------------------------------------------------------------------------
@@ -188,7 +189,7 @@ def test_takeover_api_identity_and_owner_gate(tmp_path):
     c = TestClient(create_app(TakeoverStore(tmp_path)))
     assert c.get("/v1/takeover/faq").status_code == 200
     assert c.get("/v1/takeover/banner").status_code == 401
-    r = c.get("/v1/takeover/banner?person=nathan", headers={"X-Cvc-Person": "alice"})
+    r = c.get("/v1/takeover/banner?person=alex", headers={"X-Cvc-Person": "alice"})
     assert r.json() == {"person": "alice", "active": False, "takeovers": []}
     assert c.get("/v1/takeover/status", headers={"X-Cvc-Person": "a",
                                                  "X-Cvc-Tier": "admin"}).status_code == 403

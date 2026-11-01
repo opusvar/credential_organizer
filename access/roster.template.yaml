@@ -1,4 +1,4 @@
-# Roster template (D16) -- people and their agents, by tier. TO BE FILLED IN BY NATHAN.
+# Roster template (D16) -- people and their agents, by tier. TO BE FILLED IN BY THE OWNER.
 # Copy the entries you need into access/registry.yaml (`people:` and `agents:` sections),
 # replace every <placeholder>, delete the rest, then run `cvc-access check`.
 # Policy: docs/ACCESS-CLASSIFICATION.md. No secrets here (only public metadata).
@@ -17,26 +17,26 @@ people:
   # ── owner ─────────────────────────────────────────────────────────────────
   # Full matrix including secret. Needs >= 2 active hardware keys: exactly one with
   # `role: primary`, the rest `role: backup` (hardware_keys section).
-  nathan: {email: <email>, tier: owner, tailnet: owner}
+  alex: {email: <email>, tier: owner, tailnet: owner}
 
   # ── admin / high (family) ─────────────────────────────────────────────────
   # admin: Portainer/admin UIs (passkey required). high: dashboard. Granted by the owner.
-  # <person-id>: {email: <email>, tier: admin, tailnet: family, granted_by: nathan}
-  # <person-id>: {email: <email>, tier: high, tailnet: family, granted_by: nathan}
+  # <person-id>: {email: <email>, tier: admin, tailnet: family, granted_by: alex}
+  # <person-id>: {email: <email>, tier: high, tailnet: family, granted_by: alex}
 
   # ── medium / low (family) ─────────────────────────────────────────────────
   # medium: Home Assistant limited control, own calendar/email for their assistant agent.
   # low: library and media. media-only: media server only.
-  # <person-id>: {email: <email>, tier: medium, tailnet: family, granted_by: nathan}
-  # <person-id>: {email: <email>, tier: low, tailnet: family, granted_by: nathan}
-  # <person-id>: {email: <email>, tier: media-only, tailnet: family, granted_by: nathan}
+  # <person-id>: {email: <email>, tier: medium, tailnet: family, granted_by: alex}
+  # <person-id>: {email: <email>, tier: low, tailnet: family, granted_by: alex}
+  # <person-id>: {email: <email>, tier: media-only, tailnet: family, granted_by: alex}
 
   # ── guests ────────────────────────────────────────────────────────────────
   # Prefer `cvc-access guest add <id>` (expires defaults to today + 5 days).
   # End early with `cvc-access guest checkout <id>` (also revokes their agents).
   # ha: none | view | limited-control (guest tiers only).
-  # <guest-id>: {tier: guest-short, tailnet: guests, expires: <YYYY-MM-DD>, granted_by: nathan, ha: none}
-  # <guest-id>: {tier: guest-long, tailnet: guests, expires: <YYYY-MM-DD>, granted_by: nathan, ha: view}
+  # <guest-id>: {tier: guest-short, tailnet: guests, expires: <YYYY-MM-DD>, granted_by: alex, ha: none}
+  # <guest-id>: {tier: guest-long, tailnet: guests, expires: <YYYY-MM-DD>, granted_by: alex, ha: view}
 
 agents:
   # Every agent: tier (scoped|low|medium|high|assistant), tailnet: agents, sponsor: <person>.
@@ -44,17 +44,17 @@ agents:
   # system + action; secret data only via `via: broker-approved` on an effective high agent.
 
   # ── high: orchestrators (owner-sponsored only) ────────────────────────────
-  # <agent-id>: {tier: high, tailnet: agents, sponsor: nathan, roles: [<role>], token_sha256: <sha256>}
+  # <agent-id>: {tier: high, tailnet: agents, sponsor: alex, roles: [<role>], token_sha256: <sha256>}
 
   # ── assistant: acts for one person, capped at min(person, medium) ─────────
   # <agent-id>: {tier: assistant, tailnet: agents, sponsor: <person-id>, roles: [<role>]}
 
   # ── medium: task planners, email triage ───────────────────────────────────
-  # <agent-id>: {tier: medium, tailnet: agents, sponsor: nathan, roles: [<role>]}
+  # <agent-id>: {tier: medium, tailnet: agents, sponsor: alex, roles: [<role>]}
 
   # ── low / scoped: new or narrow bots (scoped: at most 2 systems) ──────────
-  # <agent-id>: {tier: low, tailnet: agents, sponsor: nathan, roles: [<role>]}
-  # <agent-id>: {tier: scoped, tailnet: agents, sponsor: nathan, roles: [<role>]}
+  # <agent-id>: {tier: low, tailnet: agents, sponsor: alex, roles: [<role>]}
+  # <agent-id>: {tier: scoped, tailnet: agents, sponsor: alex, roles: [<role>]}
 
   # ── guest-sponsored: capped at low, expires with the guest ────────────────
   # <agent-id>: {tier: low, tailnet: agents, sponsor: <guest-id>, roles: [<role>]}

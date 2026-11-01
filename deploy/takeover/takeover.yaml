@@ -76,7 +76,7 @@ metadata:
 spec:
   entryPoints: [websecure]
   routes:
-    - match: Host(`takeover.orangepi6.humpback-krait.ts.net`) && (Path(`/v1/takeover/banner`) || Path(`/v1/takeover/faq`))
+    - match: Host(`takeover.${SITE_BASE_DOMAIN}`) && (Path(`/v1/takeover/banner`) || Path(`/v1/takeover/faq`))
       kind: Rule
       middlewares:
         - {name: cvc-strip-identity-headers}
@@ -96,7 +96,7 @@ metadata:
 spec:
   entryPoints: [websecure]
   routes:
-    - match: Host(`takeover-admin.orangepi6.humpback-krait.ts.net`) && Path(`/v1/takeover/status`)
+    - match: Host(`takeover-admin.${SITE_BASE_DOMAIN}`) && Path(`/v1/takeover/status`)
       kind: Rule
       middlewares:
         - {name: cvc-strip-identity-headers}

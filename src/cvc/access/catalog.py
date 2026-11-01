@@ -8,6 +8,7 @@ import yaml
 from cvc.access.builders import GENERATED_HEADER, register_builder
 from cvc.access.check import check_resources
 from cvc.access.model import PERSON_TIERS, Person, Registry, RegistryError, Resource
+from cvc.site import GENERIC
 
 _RANK = {t: i for i, t in enumerate(PERSON_TIERS)}
 
@@ -28,7 +29,7 @@ def reachable(registry: Registry, person: Person,
             if can_reach(person, registry.resources[r], today)]
 
 
-DEFAULT_BASE_DOMAIN = "orangepi6.humpback-krait.ts.net"
+DEFAULT_BASE_DOMAIN = GENERIC.base_domain   # library default; CLIs use the loaded site
 
 
 def resource_hosts(registry: Registry, base_domain: str = DEFAULT_BASE_DOMAIN,

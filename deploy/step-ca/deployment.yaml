@@ -78,7 +78,7 @@ spec:
             - name: https
               containerPort: 9000
               hostPort: 9000
-              hostIP: "100.106.97.34"   # Tailscale only
+              hostIP: "${SITE_NODE_IP}"   # Tailscale only
           readinessProbe:
             httpGet:
               path: /health

@@ -9,11 +9,11 @@ metadata:
 data:
   config.yaml: |
     # Tier order: guest-short < guest-long < media-only < low < medium < high < admin < owner
-    # Hosts with min tier high/admin/owner also need Authentik passkey proof: dashboard.orangepi6.humpback-krait.ts.net, portainer.orangepi6.humpback-krait.ts.net.
+    # Hosts with min tier high/admin/owner also need Authentik passkey proof: dashboard.cvc.example.ts.net, portainer.cvc.example.ts.net.
     # default_min_tier is unset: hosts not listed are denied.
     hosts:
-      books.orangepi6.humpback-krait.ts.net: guest-long
-      dashboard.orangepi6.humpback-krait.ts.net: high
-      ha.orangepi6.humpback-krait.ts.net: medium
-      media.orangepi6.humpback-krait.ts.net: media-only
-      portainer.orangepi6.humpback-krait.ts.net: admin
+      books.cvc.example.ts.net: guest-long
+      dashboard.cvc.example.ts.net: high
+      ha.cvc.example.ts.net: medium
+      media.cvc.example.ts.net: media-only
+      portainer.cvc.example.ts.net: admin

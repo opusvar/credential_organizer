@@ -18,6 +18,7 @@ from typing import Any
 
 import yaml
 
+from cvc import site as site_config
 from cvc.access.check import check_classification, check_tiers
 from cvc.access.model import (
     AGENT_TIERS,
@@ -575,12 +576,22 @@ def _cli_agent_add(data: dict, a: argparse.Namespace, today: dt.date) -> str:
                      expires=dt.date.fromisoformat(a.expires) if a.expires else None)[1]
 
 
+SITE_OWNER = "<site-default-owner>"   # sentinel: resolved from site.yaml in run_edit
+_OWNER_HELP = "person id (default: first of the site's default_owner_ids)"
+
+
+def _resolve_site_owner(args: argparse.Namespace) -> None:
+    for k, v in vars(args).items():
+        if v == SITE_OWNER:
+            setattr(args, k, site_config.owners_or_default(None, site_config.load())[0])
+
+
 def add_parsers(sub: argparse._SubParsersAction, reg_kw: dict) -> None:
     hw = sub.add_parser("hwkey", help="enroll or revoke hardware keys (YubiKeys)")
     hws = hw.add_subparsers(dest="action", required=True)
     e = hws.add_parser("enroll")
     e.add_argument("--id", required=True)
-    e.add_argument("--owner", default="nathan")
+    e.add_argument("--owner", default=SITE_OWNER, help=_OWNER_HELP)
     e.add_argument("--serial")
     e.add_argument("--model")
     e.add_argument("--uses", required=True, help="comma-separated, e.g. recovery,fido2-vaultwarden")
@@ -619,7 +630,7 @@ def add_parsers(sub: argparse._SubParsersAction, reg_kw: dict) -> None:
     dvs = dv.add_subparsers(dest="action", required=True)
     a = dvs.add_parser("add")
     a.add_argument("id")
-    a.add_argument("--owner", default="nathan")
+    a.add_argument("--owner", default=SITE_OWNER, help=_OWNER_HELP)
     a.add_argument("--kind", required=True, choices=DEVICE_KINDS)
     a.add_argument("--storage", required=True, choices=CERT_STORAGE)
     a.add_argument("--hardware-key")
@@ -650,7 +661,7 @@ def add_parsers(sub: argparse._SubParsersAction, reg_kw: dict) -> None:
     pa = pes.add_parser("add", help="add a non-guest person (guests: `guest add`)")
     pa.add_argument("id")
     pa.add_argument("--tier", required=True, choices=NON_GUEST_TIERS)
-    pa.add_argument("--granted-by", default="nathan")
+    pa.add_argument("--granted-by", default=SITE_OWNER, help=_OWNER_HELP)
     pa.add_argument("--tailnet", choices=TAILNETS,
                     help="default: owner for owners, family otherwise")
     pa.add_argument("--name", help="display name")
@@ -670,7 +681,7 @@ def add_parsers(sub: argparse._SubParsersAction, reg_kw: dict) -> None:
     ga.add_argument("--tier", choices=sorted(GUEST_TIERS), default="guest-short")
     ga.add_argument("--expires", help="YYYY-MM-DD (default: today + 5 days)")
     ga.add_argument("--email")
-    ga.add_argument("--granted-by", default="nathan")
+    ga.add_argument("--granted-by", default=SITE_OWNER, help=_OWNER_HELP)
     ga.set_defaults(edit=guest_add)
     gc = gus.add_parser("checkout", help="end a guest's access now (and their agents')")
     gc.add_argument("id")
@@ -751,6 +762,7 @@ def run_edit(args: argparse.Namespace, today: dt.date | None = None) -> int:
     dry = getattr(args, "dry_run", False)
     what = f"{getattr(args, 'cmd', '')} {getattr(args, 'action', '')}".strip() or "this edit"
     try:
+        _resolve_site_owner(args)
         msg = apply_edit(args.registry, lambda d: args.edit(d, args, day), dry_run=dry,
                          what=what, out=print)
     except RegistryError as e:

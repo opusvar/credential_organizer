@@ -31,8 +31,8 @@ echo "OPI:  $OPI"
 echo
 
 # Constants defined in cvc (sources of truth)
-TAILSCALE_IP="100.106.97.34"
-TAILSCALE_HOST="orangepi6.humpback-krait.ts.net"
+TAILSCALE_IP="${SITE_NODE_IP}"
+TAILSCALE_HOST="${SITE_BASE_DOMAIN}"
 VW_URL="https://${TAILSCALE_HOST}:8443/vault"
 BROKER_PORT="8710"
 # Phase 2/3 timer constants (D10 — host systemd user timers, not k3s CronJobs).

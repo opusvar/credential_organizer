@@ -4,7 +4,7 @@
 #
 # Prerequisites:
 #   kubectl create secret generic cvc-vault \
-#     --from-literal=BW_SERVER=https://orangepi6.humpback-krait.ts.net:8443/vault \
+#     --from-literal=BW_SERVER=${SITE_VAULT_URL} \
 #     --from-literal=BW_CLIENTID=<from Vaultwarden Account Settings → API Key> \
 #     --from-literal=BW_CLIENTSECRET=<from Vaultwarden Account Settings → API Key> \
 #     --from-literal=BW_PASSWORD=<vault master password>
@@ -37,9 +37,9 @@ spec:
             runAsNonRoot: true
             runAsUser: 1000       # matches `useradd -m -u 1000 cvc` in the Dockerfile
           hostAliases:
-            - ip: "100.106.97.34"
+            - ip: "${SITE_NODE_IP}"
               hostnames:
-                - "orangepi6.humpback-krait.ts.net"
+                - "${SITE_BASE_DOMAIN}"
           containers:
             - name: cvc-remind
               image: cvc:latest

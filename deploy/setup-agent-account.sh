@@ -18,7 +18,7 @@
 #   4. Run: bw unlock && export BW_SESSION="<key>"
 #   5. Run: bw get api-key --nointeraction  → copy client_id + client_secret
 #   6. Load into k8s: kubectl -n cvc create secret generic cvc-broker-vault \
-#        --from-literal=BW_SERVER=https://orangepi6.humpback-krait.ts.net:8443/vault \
+#        --from-literal=BW_SERVER=${SITE_VAULT_URL} \
 #        --from-literal=BW_CLIENTID=<client_id> \
 #        --from-literal=BW_CLIENTSECRET=<client_secret> \
 #        --from-literal=BW_PASSWORD=<printed password>
@@ -46,7 +46,7 @@ EMAIL="${1:-cvc-agent@local}"
 VW_DB="/home/admin/data/auth/vaultwarden/db.sqlite3"
 ADMIN_TOKEN="$(grep VAULTWARDEN_ADMIN_TOKEN /home/admin/containers/compose/auth/.env \
   | cut -d= -f2- | tr -d '[:space:]')"
-VW_BASE="https://orangepi6.humpback-krait.ts.net:8443/vault"
+VW_BASE="${SITE_VAULT_URL}"
 COOKIE_FILE="/tmp/vw-admin.cookie"
 KUBECTL="sudo kubectl"
 

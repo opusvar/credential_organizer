@@ -22,12 +22,12 @@ def base() -> dict:
                                 "tier": "assistant"},
         },
         "people": {
-            "nathan": {"email": "nathan@local"},
-            "alice": {"email": "alice@local", "granted_by": "nathan"},
+            "alex": {"email": "alex@local"},
+            "alice": {"email": "alice@local", "granted_by": "alex"},
             "bob": {"email": "bob@local", "granted_by": "alice"},
         },
         "hardware_keys": {
-            "yk-nathan": {"owner": "nathan", "model": "YubiKey 5C", "serial": 111,
+            "yk-alex": {"owner": "alex", "model": "YubiKey 5C", "serial": 111,
                           "uses": ["piv-device-cert"], "location": "on-person",
                           "enrolled": dt.date(2026, 10, 1), "status": "active"},
             "yk-alice": {"owner": "alice", "model": "YubiKey 5C", "serial": 222,
@@ -42,9 +42,9 @@ def base() -> dict:
                          "status": "active"},
                 "roles": ["home-services"],
             },
-            "nathan-mac": {
-                "owner": "nathan", "kind": "laptop",
-                "cert": {"storage": "yubikey-piv", "hardware_key": "yk-nathan",
+            "alex-mac": {
+                "owner": "alex", "kind": "laptop",
+                "cert": {"storage": "yubikey-piv", "hardware_key": "yk-alex",
                          "serial": "beef", "fingerprint_sha256": FP,
                          "not_after": dt.date(2027, 1, 31), "status": "active"},
                 "roles": ["home-services"],
@@ -70,8 +70,8 @@ def test_person_remove(reg, capsys):
     d = load(reg)
     parse_registry(d)
     assert "alice" not in d["people"]
-    assert "alice-phone" not in d["devices"] and "nathan-mac" in d["devices"]
-    assert "yk-alice" not in d["hardware_keys"] and "yk-nathan" in d["hardware_keys"]
+    assert "alice-phone" not in d["devices"] and "alex-mac" in d["devices"]
+    assert "yk-alice" not in d["hardware_keys"] and "yk-alex" in d["hardware_keys"]
     assert "alice-assistant" not in d["agents"]
     assert "bob" in d["people"] and d["people"]["bob"]["granted_by"] is None
     assert "! people.bob" in out
@@ -93,16 +93,16 @@ def test_person_remove_dry_run(reg, capsys):
 
 
 def test_device_lost_yubikey(reg, capsys):
-    assert main(["device", "lost", "nathan-mac", "--registry", str(reg)]) == 0
+    assert main(["device", "lost", "alex-mac", "--registry", str(reg)]) == 0
     out = capsys.readouterr().out
-    dev = load(reg)["devices"]["nathan-mac"]
+    dev = load(reg)["devices"]["alex-mac"]
     parse_registry(load(reg))
     assert dev["status"] == "lost" and isinstance(dev["lost"], dt.date)
     assert dev["cert"]["status"] == "revoked"
     assert dev["history"][-1]["event"] == "lost"
     assert 'step ca revoke beef --reason "device lost"' in out
-    assert "hwkey revoke yk-nathan" in out
-    assert main(["device", "lost", "nathan-mac", "--registry", str(reg)]) == 1
+    assert "hwkey revoke yk-alex" in out
+    assert main(["device", "lost", "alex-mac", "--registry", str(reg)]) == 1
 
 
 def test_device_lost_p12_dry_run(reg, capsys):
