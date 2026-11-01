@@ -4,8 +4,11 @@ Tiers (read from the ACL `tier:` field; absent/unknown -> `scoped`, the most res
 non-high default):
 
 - ``scoped``    — automation agent. Session tokens live at most 15 minutes.
+- ``low``       — low-privilege agent. Session tokens live at most 15 minutes.
+- ``medium``    — medium-privilege agent. Session tokens live at most 10 minutes.
 - ``assistant`` — acts on behalf of a person. Every audit record carries dual attribution
                   (agent id + ``on_behalf_of``). Missing ``on_behalf_of`` -> deny.
+                  Ranked at ``medium`` (an assistant is capped at medium privilege).
 - ``high``      — powerful agent. Any request against an ACL entry marked
                   ``physical: true`` is denied until a human approves a pending approval
                   record for exactly that agent/credential/purpose. Approvals are single-use.
@@ -24,12 +27,16 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
-TIERS = ("scoped", "assistant", "high")
+TIERS = ("scoped", "low", "medium", "high", "assistant")
 DEFAULT_TIER = "scoped"
 
-# Session-token TTL by tier, seconds. Every tier is capped at 15 minutes; `high` is shorter.
+# Privilege ladder: scoped < low < medium < high. `assistant` is capped at medium.
+TIER_RANK = {"scoped": 0, "low": 1, "medium": 2, "high": 3, "assistant": 2}
+
+# Session-token TTL by tier, seconds. Every tier is capped at 15 minutes; higher is shorter.
 MAX_TTL = 15 * 60
-TIER_TTL = {"scoped": MAX_TTL, "assistant": MAX_TTL, "high": 5 * 60}
+TIER_TTL = {"scoped": MAX_TTL, "low": MAX_TTL, "medium": 10 * 60, "high": 5 * 60,
+            "assistant": MAX_TTL}
 
 SESSION_PREFIX = "cvcs_"
 
@@ -37,6 +44,11 @@ SESSION_PREFIX = "cvcs_"
 def normalize_tier(raw: object) -> str:
     t = str(raw or "").strip().lower()
     return t if t in TIERS else DEFAULT_TIER
+
+
+def tier_rank(tier: str) -> int:
+    """Position on the privilege ladder (unknown -> scoped)."""
+    return TIER_RANK[normalize_tier(tier)]
 
 
 def _sha256(s: str) -> str:
