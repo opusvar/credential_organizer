@@ -23,6 +23,7 @@ class EmergencyGrant:
     grantor_email: str
     type: str          # "view" | "takeover"
     wait_days: int
+    status: int = 3    # VW: 0 invited, 1 accepted, 2 confirmed, 3 recovery-initiated, 4 approved
 
 
 class EmergencyAccessClient(Protocol):
@@ -50,7 +51,8 @@ class HttpEmergencyAccessClient:
         r = self.http.get("/api/emergency-access/granted")
         r.raise_for_status()
         return [EmergencyGrant(str(g["id"]), str(g.get("email", "")).lower(),
-                               VW_TYPES.get(g.get("type"), "unknown"), int(g.get("waitTimeDays", 0)))
+                               VW_TYPES.get(g.get("type"), "unknown"), int(g.get("waitTimeDays", 0)),
+                               int(g.get("status", 0)))
                 for g in r.json().get("data", [])]
 
     def initiate(self, grant_id: str) -> None:
