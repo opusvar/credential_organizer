@@ -2,7 +2,7 @@
 # smoke-test.sh — live end-to-end integration test against the running cvc credential broker.
 #
 # Purpose:
-#   Exercises the real broker at $BROKER_URL (default: http://100.106.97.34:8710) with a
+#   Exercises the real broker at $BROKER_URL (default: ${SITE_BROKER_URL}) with a
 #   real agent token, and asserts:
 #     1. /healthz responds and reports "ok"
 #     2. POST /v1/credentials/fetch returns HTTP 200 for a known-good agent/credential/purpose
@@ -45,7 +45,7 @@ Token resolution (never pass a token as a CLI argument):
      and non-empty. This file should be chmod 600.
 
 Other overridable parameters (env vars):
-  CVC_BROKER_URL         broker base URL      (default: http://100.106.97.34:8710)
+  CVC_BROKER_URL         broker base URL      (default: ${SITE_BROKER_URL})
   CVC_SMOKE_AGENT        X-Agent-Id           (default: playwright-example)
   CVC_SMOKE_CREDENTIAL   credential UUID      (default: 72c393aa-6bc7-4323-a9e7-e2d7459aa777)
   CVC_SMOKE_PURPOSE      purpose string       (default: smoke-test)
@@ -80,7 +80,7 @@ for arg in "$@"; do
     esac
 done
 
-BROKER_URL="${CVC_BROKER_URL:-http://100.106.97.34:8710}"
+BROKER_URL="${CVC_BROKER_URL:-${SITE_BROKER_URL}}"
 AGENT_ID="${CVC_SMOKE_AGENT:-playwright-example}"
 CREDENTIAL="${CVC_SMOKE_CREDENTIAL:-72c393aa-6bc7-4323-a9e7-e2d7459aa777}"
 PURPOSE="${CVC_SMOKE_PURPOSE:-smoke-test}"

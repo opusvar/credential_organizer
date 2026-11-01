@@ -36,9 +36,9 @@ def test_person_name_parsed_and_consistent_with_takeover(reg):
     d["people"]["sam"]["name"] = "Sam S"
     r = parse_registry(d)
     assert r.people["sam"].name == "Sam S" and r.people["sam"].display_name == "Sam S"
-    assert r.people["nathan"].name is None and r.people["nathan"].display_name == "nathan"
+    assert r.people["alex"].name is None and r.people["alex"].display_name == "alex"
     assert display_name(d, "sam") == r.people["sam"].display_name
-    assert display_name(d, "nathan") == r.people["nathan"].display_name
+    assert display_name(d, "alex") == r.people["alex"].display_name
 
 
 def test_person_name_must_be_nonempty_string(reg):
@@ -53,31 +53,31 @@ def test_graph_shows_name(reg):
     d["people"]["sam"]["name"] = "Sam S"
     out = build_graph(parse_registry(d), TODAY)
     assert "Sam S<br/>(sam)" in out
-    assert '["nathan<br/>tier: owner"]' in out
+    assert '["alex<br/>tier: owner"]' in out
 
 
 # ── person_add ──────────────────────────────────────────────────────────────
 
 def test_person_add_helper(reg):
     d = data(reg)
-    out, msg = person_add(d, "alice", tier="medium", granted_by="nathan", name="Alice A",
+    out, msg = person_add(d, "alice", tier="medium", granted_by="alex", name="Alice A",
                           email="a@x", today=TODAY)
     assert out is d and "added person alice (Alice A)" in msg
     p = parse_registry(d).people["alice"]
-    assert (p.name, p.tier, p.tailnet, p.granted_by) == ("Alice A", "medium", "family", "nathan")
+    assert (p.name, p.tier, p.tailnet, p.granted_by) == ("Alice A", "medium", "family", "alex")
     assert p.history[0] == {"date": TODAY, "event": "added"}
 
 
 def test_person_add_owner_defaults_owner_tailnet(reg):
     d = data(reg)
-    person_add(d, "o2", tier="owner", granted_by="nathan", today=TODAY)
+    person_add(d, "o2", tier="owner", granted_by="alex", today=TODAY)
     assert d["people"]["o2"]["tailnet"] == "owner"
 
 
 @pytest.mark.parametrize("kw,err", [
-    ({"tier": "guest-short", "granted_by": "nathan"}, "use `guest add`"),
-    ({"tier": "medium", "granted_by": "nathan", "name": " "}, "name must not be empty"),
-    ({"tier": "medium", "granted_by": "nathan", "tailnet": "bogus"}, "tailnet"),
+    ({"tier": "guest-short", "granted_by": "alex"}, "use `guest add`"),
+    ({"tier": "medium", "granted_by": "alex", "name": " "}, "name must not be empty"),
+    ({"tier": "medium", "granted_by": "alex", "tailnet": "bogus"}, "tailnet"),
     ({"tier": "medium", "granted_by": "ghost"}, "unknown person"),
     ({"tier": "admin", "granted_by": "sam"}, "refused by tier rules"),
 ])
@@ -91,23 +91,23 @@ def test_person_add_refusals_leave_data_untouched(reg, kw, err):
 
 def test_person_add_duplicate(reg):
     with pytest.raises(EditError, match="already exists"):
-        person_add(data(reg), "sam", tier="medium", granted_by="nathan")
+        person_add(data(reg), "sam", tier="medium", granted_by="alex")
 
 
 # ── agent_add ───────────────────────────────────────────────────────────────
 
 def test_agent_add_helper(reg):
     d = data(reg)
-    out, msg = agent_add(d, "bot", tier="high", sponsor="nathan", roles=["sensor-publish"])
+    out, msg = agent_add(d, "bot", tier="high", sponsor="alex", roles=["sensor-publish"])
     assert out is d and "added agent bot" in msg
     a = parse_registry(d).agents["bot"]
-    assert (a.tier, a.sponsor, a.granted_by, a.roles) == ("high", "nathan", "nathan",
+    assert (a.tier, a.sponsor, a.granted_by, a.roles) == ("high", "alex", "alex",
                                                           ("sensor-publish",))
 
 
 @pytest.mark.parametrize("kw,err", [
-    ({"tier": "nope", "sponsor": "nathan"}, "not an agent tier"),
-    ({"tier": "low", "sponsor": "nathan", "roles": ["ghost"]}, "unknown role"),
+    ({"tier": "nope", "sponsor": "alex"}, "not an agent tier"),
+    ({"tier": "low", "sponsor": "alex", "roles": ["ghost"]}, "unknown role"),
     ({"tier": "low", "sponsor": "ghost"}, "unknown person"),
 ])
 def test_agent_add_refusals(reg, kw, err):
@@ -120,7 +120,7 @@ def test_agent_add_refusals(reg, kw, err):
 
 def test_agent_add_duplicate_principal(reg):
     with pytest.raises(EditError, match="already exists"):
-        agent_add(data(reg), "nathan-mac", tier="low", sponsor="nathan")
+        agent_add(data(reg), "alex-mac", tier="low", sponsor="alex")
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
@@ -150,7 +150,7 @@ def test_cli_person_add_refused(reg, capsys):
 
 
 def test_cli_agent_add(reg, capsys):
-    rc = main(["agent", "add", "bot", "--tier", "high", "--sponsor", "nathan",
+    rc = main(["agent", "add", "bot", "--tier", "high", "--sponsor", "alex",
                "--roles", "sensor-publish", "--expires", "2027-01-01", "--registry", str(reg)])
     assert rc == 0, capsys.readouterr().err
     a = data(reg)["agents"]["bot"]
@@ -159,7 +159,7 @@ def test_cli_agent_add(reg, capsys):
 
 def test_cli_agent_add_dry_run(reg, capsys):
     before = reg.read_text()
-    rc = main(["agent", "add", "bot", "--tier", "high", "--sponsor", "nathan",
+    rc = main(["agent", "add", "bot", "--tier", "high", "--sponsor", "alex",
                "--registry", str(reg), "--dry-run"])
     assert rc == 0 and reg.read_text() == before
     assert "dry run" in capsys.readouterr().out
@@ -171,16 +171,16 @@ def test_apply_edit_confirm_and_abort(reg):
     lines: list[str] = []
     before = reg.read_text()
     with pytest.raises(EditError, match="aborted"):
-        apply_edit(reg, lambda d: person_add(d, "alice", tier="low", granted_by="nathan")[1],
+        apply_edit(reg, lambda d: person_add(d, "alice", tier="low", granted_by="alex")[1],
                    out=lines.append, confirm=lambda: False)
     assert reg.read_text() == before and any("+  alice:" in x for x in lines)
-    msg = apply_edit(reg, lambda d: person_add(d, "alice", tier="low", granted_by="nathan")[1],
+    msg = apply_edit(reg, lambda d: person_add(d, "alice", tier="low", granted_by="alex")[1],
                      out=lines.append, confirm=lambda: True)
     assert "alice" in msg and "alice" in data(reg)["people"]
 
 
 def test_apply_edit_no_aliases(reg):
-    apply_edit(reg, lambda d: person_add(d, "alice", tier="low", granted_by="nathan",
+    apply_edit(reg, lambda d: person_add(d, "alice", tier="low", granted_by="alex",
                                          today=TODAY)[1])
     assert "&id" not in reg.read_text()
 

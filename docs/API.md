@@ -64,7 +64,7 @@ python -c "import yaml, json; from cvc.broker.app import app; print(yaml.dump(js
 
   The broker runs from a built image: after merging changes to `src/cvc/broker/` or
   `src/cvc/backup/`, run `deploy/rebuild.sh --restart` or the live pod keeps the old behaviour.
-  The broker listens on 8710 (hostPort on the Tailscale IP `100.106.97.34`).
+  The broker listens on 8710 (hostPort on the Tailscale IP `<node_ip>`).
 
 The other components (importers, reminders, backup) are CLIs/jobs, not HTTP services, so they
 have no OpenAPI surface; their contracts live in `ARCHITECTURE.md` and their `--help`.

@@ -15,7 +15,7 @@ flowchart LR
         p_home_assistant["home-assistant"]
     end
     subgraph people["People"]
-        u_nathan["nathan<br/>tier: owner"]
+        u_alex["alex<br/>tier: owner"]
         u_sam["sam<br/>tier: medium"]
         u_visitor["visitor<br/>tier: guest-long"]
     end
@@ -24,8 +24,8 @@ flowchart LR
         k_yk_primary["yk-primary<br/>on-person"]
     end
     subgraph devices["Devices"]
-        p_nathan_iphone["nathan-iphone<br/>phone<br/>cert: active (p12)"]
-        p_nathan_mac["nathan-mac<br/>laptop<br/>cert: pending (yubikey-piv)"]
+        p_alex_iphone["alex-iphone<br/>phone<br/>cert: active (p12)"]
+        p_alex_mac["alex-mac<br/>laptop<br/>cert: pending (yubikey-piv)"]
     end
     subgraph roles["Roles"]
         r_backup_runner["backup-runner"]
@@ -41,11 +41,11 @@ flowchart LR
         s_vaultwarden["vaultwarden<br/>credential-store<br/>private/act"]
         s_workers["workers<br/>http<br/>internal/write<br/>(not enforced)"]
     end
-    u_nathan --> p_nathan_iphone
-    u_nathan --> p_nathan_mac
-    p_nathan_mac --> k_yk_primary
-    u_nathan -.->|"sponsors"| p_personal_dashboard
-    u_nathan -.->|"sponsors"| p_playwright_billing
+    u_alex --> p_alex_iphone
+    u_alex --> p_alex_mac
+    p_alex_mac --> k_yk_primary
+    u_alex -.->|"sponsors"| p_personal_dashboard
+    u_alex -.->|"sponsors"| p_playwright_billing
     u_visitor -.->|"sponsors"| p_visitor_helper
     p_personal_dashboard --> r_backup_runner
     p_personal_dashboard --> r_worker_caller
@@ -54,8 +54,8 @@ flowchart LR
     p_cvc_remind --> r_cvc_remind_publisher
     p_garage_temp --> r_sensor_publish
     p_home_assistant --> r_home_assistant
-    p_nathan_iphone --> r_worker_caller
-    p_nathan_mac --> r_worker_caller
+    p_alex_iphone --> r_worker_caller
+    p_alex_mac --> r_worker_caller
     r_backup_runner -->|"1 credential #40;backup#41;: * #91;secret/read via broker-approved#93;"| s_vaultwarden
     r_billing_agent -->|"1 credential: pay-invoice #91;private/act#93;"| s_vaultwarden
     r_cvc_remind_publisher -->|"write: cvc/reminders/#35;, homeassistant/sensor/cvc_stale_credentials/config #91;internal/write#93;"| s_ha_mqtt
@@ -74,8 +74,8 @@ flowchart LR
     classDef soon fill:#fed7aa,stroke:#c2410c,color:#0f172a,stroke-width:2px
     class s_ha_mqtt,s_vaultwarden enforced
     class k_yk_backup,k_yk_primary hwkey
-    class u_nathan,u_sam,u_visitor person
-    class p_personal_dashboard,p_playwright_billing,p_visitor_helper,p_cvc_remind,p_garage_temp,p_home_assistant,p_nathan_iphone,p_nathan_mac principal
+    class u_alex,u_sam,u_visitor person
+    class p_personal_dashboard,p_playwright_billing,p_visitor_helper,p_cvc_remind,p_garage_temp,p_home_assistant,p_alex_iphone,p_alex_mac principal
     class r_backup_runner,r_billing_agent,r_cvc_remind_publisher,r_home_assistant,r_sensor_publish,r_worker_caller,r_worker_caller_read role
     class s_workers unenforced
 ```
@@ -86,36 +86,36 @@ Solid blue = enforced; dashed = documented only (not enforced); grey = expired; 
 
 | id | type | tier | sponsor | roles | expires | status |
 |---|---|---|---|---|---|---|
-| personal-dashboard | agent | high | nathan | backup-runner, worker-caller | 2027-01-31 | active |
-| playwright-billing | agent | medium | nathan | billing-agent | - | active |
+| personal-dashboard | agent | high | alex | backup-runner, worker-caller | 2027-01-31 | active |
+| playwright-billing | agent | medium | alex | billing-agent | - | active |
 | visitor-helper | agent | medium (effective low) | visitor | worker-caller-read | 2026-12-31 | active |
 | cvc-remind | machine | - | - | cvc-remind-publisher | - | active |
 | garage-temp | machine | - | - | sensor-publish | - | active |
 | home-assistant | machine | - | - | home-assistant | - | active |
-| nathan-iphone | device | - | - | worker-caller | - | active |
-| nathan-mac | device | - | - | worker-caller | - | active |
+| alex-iphone | device | - | - | worker-caller | - | active |
+| alex-mac | device | - | - | worker-caller | - | active |
 
 ## People
 
 | id | tier | tailnet | ha | expires | granted by |
 |---|---|---|---|---|---|
-| nathan | owner | owner | none | - | - |
-| sam | medium | family | none | - | nathan |
-| visitor | guest-long | guests | none | 2026-12-31 | nathan |
+| alex | owner | owner | none | - | - |
+| sam | medium | family | none | - | alex |
+| visitor | guest-long | guests | none | 2026-12-31 | alex |
 
 ## Devices
 
 | id | owner | kind | cert storage | cert status | cert not after | history entries |
 |---|---|---|---|---|---|---|
-| nathan-iphone | nathan | phone | p12 | active | 2027-01-31 | 1 |
-| nathan-mac | nathan | laptop | yubikey-piv | pending | - | 0 |
+| alex-iphone | alex | phone | p12 | active | 2027-01-31 | 1 |
+| alex-mac | alex | laptop | yubikey-piv | pending | - | 0 |
 
 ## Hardware keys
 
 | id | owner | model | uses | location | status | device certs |
 |---|---|---|---|---|---|---|
-| yk-backup | nathan | YubiKey 5 NFC | fido2-vaultwarden, recovery | home-safe | active | 0 |
-| yk-primary | nathan | YubiKey 5C NFC | fido2-vaultwarden, piv-device-cert, recovery | on-person | active | 1 |
+| yk-backup | alex | YubiKey 5 NFC | fido2-vaultwarden, recovery | home-safe | active | 0 |
+| yk-primary | alex | YubiKey 5C NFC | fido2-vaultwarden, piv-device-cert, recovery | on-person | active | 1 |
 
 ## Resources
 
@@ -133,7 +133,7 @@ Same rule as the tier gate: active person, tier >= resource min tier. `yes*` = p
 
 | person | tier | books | dashboard | ha | media | portainer |
 |---|---|---|---|---|---|---|
-| nathan | owner | yes | yes* | yes | yes | yes* |
+| alex | owner | yes | yes* | yes | yes | yes* |
 | sam | medium | yes | - | yes | yes | - |
 | visitor | guest-long | yes | - | - | - | - |
 

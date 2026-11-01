@@ -15,21 +15,21 @@ def _strip(text):
 
 
 def test_owner_full_and_shared_limited():
-    policy, warnings = build_policy(load_registry(REG), ["nathan"])
+    policy, warnings = build_policy(load_registry(REG), ["alex"])
     assert warnings == []
-    assert policy["groups"] == {"group:owner": ["nathan@local"]}
+    assert policy["groups"] == {"group:owner": ["alex@local"]}
     owner, shared = policy["acls"]
     assert owner == {"action": "accept", "src": ["group:owner"], "dst": ["*:*"]}
     assert shared["src"] == ["autogroup:shared"]
     assert shared["dst"] == ["services-node:443", "services-node:8710"]
-    assert policy["hosts"]["services-node"] == "100.106.97.34"
+    assert policy["hosts"]["services-node"] == "100.64.0.10"
 
 
 def test_group_limit_warns():
-    _, w = build_policy(load_registry(REG), ["nathan"], {"a": ["nathan"], "b": ["nathan"]})
+    _, w = build_policy(load_registry(REG), ["alex"], {"a": ["alex"], "b": ["alex"]})
     assert w == []
-    _, w = build_policy(load_registry(REG), ["nathan"],
-                        {"a": ["nathan"], "b": ["nathan"], "c": ["nathan"]})
+    _, w = build_policy(load_registry(REG), ["alex"],
+                        {"a": ["alex"], "b": ["alex"], "c": ["alex"]})
     assert w and "free-plan" in w[0]
 
 
@@ -37,11 +37,11 @@ def test_unknown_owner_and_duplicate():
     with pytest.raises(PolicyError):
         build_policy(load_registry(REG), ["ghost"])
     with pytest.raises(PolicyError):
-        build_policy(load_registry(REG), ["nathan"], {"owner": ["nathan"]})
+        build_policy(load_registry(REG), ["alex"], {"owner": ["alex"]})
 
 
 def test_render_is_hujson():
-    policy, _ = build_policy(load_registry(REG), ["nathan"])
+    policy, _ = build_policy(load_registry(REG), ["alex"])
     text = render_hujson(policy)
     assert text.startswith("//")
     assert _strip(text) == policy
@@ -52,9 +52,9 @@ def test_cli_stdout_and_out(tmp_path, capsys):
     assert _strip(capsys.readouterr().out)["acls"]
     out = tmp_path / "p.hujson"
     assert main(["policy", "--registry", REG, "--out", str(out),
-                 "--group", "x=nathan", "--group", "y=nathan", "--group", "z=nathan"]) == 0
+                 "--group", "x=alex", "--group", "y=alex", "--group", "z=alex"]) == 0
     assert "warning" in capsys.readouterr().err
-    assert _strip(out.read_text())["groups"]["group:z"] == ["nathan@local"]
+    assert _strip(out.read_text())["groups"]["group:z"] == ["alex@local"]
 
 
 def test_cli_errors():

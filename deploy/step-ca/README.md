@@ -6,7 +6,7 @@
  offline root (encrypted USB / YubiKey)  --signs once-->  intermediate (RSA-3072)
                                                                |
                          /mnt/data/pki (hostPath, mode 700) ---+--> step-ca pod (ns pki)
-                                                                    hostPort 9000 on 100.106.97.34 only
+                                                                    hostPort 9000 on <node_ip> only
  Provisioners:
    authentik      OIDC  -> human sign-in via Authentik (k3s ns auth); used by issue-p12.sh
    yubikey-attest ACME device-attest-01, format "step" -> Mac/Windows, YubiKey PIV 9a key generated on-key
@@ -43,14 +43,14 @@
 | `step certificate p12 ... --ca --legacy` | Confirmed. |
 | YubiKey `step ca certificate --kms/--attestation-uri` flags | Assumed. |
 
-## Apply (manual, by Nathan)
+## Apply (manual, by the owner)
 
 1. Register port **9000/tcp (step-ca, Tailscale only)** in `opi_base_config/containers/PORT-REGISTRY.md`.
 2. Run `init.sh` on an offline machine; move root key offline (see below); copy cert/intermediate files as it prints.
 3. In Authentik: create OAuth2 provider + app `step-ca`, public-ish client, redirect `http://127.0.0.1:10000`; replace `AUTHENTIK_HOST` in `ca.json.tmpl`.
 4. Create secret + configmap (commands in `deployment.yaml` header), then
    `kubectl apply -f deploy/step-ca/namespace.yaml -f deploy/step-ca/pv.yaml -f deploy/step-ca/deployment.yaml`.
-5. `step ca bootstrap --ca-url https://100.106.97.34:9000 --fingerprint <root fp>`; `curl --cacert root_ca.crt https://100.106.97.34:9000/health`.
+5. `step ca bootstrap --ca-url <ca_url> --fingerprint <root fp>`; `curl --cacert root_ca.crt <ca_url>/health`.
 6. Issue per device; record with `cvc-access device set-cert`.
 
 ## Root-CA safety

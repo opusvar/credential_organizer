@@ -6,14 +6,17 @@ from pathlib import Path
 
 import yaml
 
+from cvc import site as site_config
+
 D = Path(__file__).resolve().parent.parent / "deploy" / "step-ca"
-TS_IP = "100.106.97.34"
+TS_IP = "100.64.0.10"   # tests/conftest.py TEST_SITE node_ip
 
 
 def _docs():
     out = []
     for f in sorted(D.glob("*.yaml")):
-        out += [d for d in yaml.safe_load_all(f.read_text()) if d]
+        text = site_config.render(f.read_text(), site_config.load())
+        out += [d for d in yaml.safe_load_all(text) if d]
     return out
 
 

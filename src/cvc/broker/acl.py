@@ -32,7 +32,7 @@ Agent-tier fields (optional, see tiers.py):
                                         # CVC_REQUIRE_SESSION_TOKEN=1 (global). When on, the
                                         # long-lived service token may only mint session
                                         # tokens; fetch/backup reject it.
-    on_behalf_of: "nathan"              # required for tier assistant (dual attribution)
+    on_behalf_of: "alex"                # required for tier assistant (dual attribution)
     allow entries may set `physical: true` — for tier high such requests need human approval.
 """
 from __future__ import annotations

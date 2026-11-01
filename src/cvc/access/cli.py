@@ -7,6 +7,7 @@ from pathlib import Path
 
 import yaml
 
+from cvc import site as site_config
 from cvc.access import brokeracl, catalog, graph, mosquitto  # noqa: F401  (register builders)
 from cvc.access.builders import BUILDERS
 from cvc.access.check import check_registry
@@ -42,8 +43,8 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--registry", **reg_kw)
     b.add_argument("--out", help="output file (default: stdout)")
     b.add_argument("--system", help="limit output to one system id (mosquitto only)")
-    b.add_argument("--base-domain", default=catalog.DEFAULT_BASE_DOMAIN,
-                   help="route base domain (tiergate only; default: %(default)s)")
+    b.add_argument("--base-domain",
+                   help="route base domain (tiergate only; default: site base_domain)")
     b.add_argument("--host", action="append", default=[], metavar="RES=FQDN",
                    help="override one resource's route host (tiergate only; repeatable)")
     b.add_argument("--registry-hosts", action="store_true",
@@ -87,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: --system is only supported for the mosquitto target, "
               f"not {args.target!r}", file=sys.stderr)
         return 2
-    host_opts = (args.base_domain != catalog.DEFAULT_BASE_DOMAIN or args.host
+    host_opts = (args.base_domain or args.host
                  or args.registry_hosts)
     if host_opts and args.target != "tiergate":
         print(f"error: --base-domain/--host/--registry-hosts are only supported for the "
@@ -104,7 +105,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.target == "mosquitto":
             text = build_mosquitto(reg, None, system=args.system)
         elif args.target == "tiergate":
-            text = catalog.build_tiergate(reg, None, base_domain=args.base_domain,
+            text = catalog.build_tiergate(reg, None, base_domain=(
+                                              args.base_domain or site_config.load().base_domain),
                                           host_overrides=overrides,
                                           registry_hosts=args.registry_hosts)
         else:

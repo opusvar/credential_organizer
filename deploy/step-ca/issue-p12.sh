@@ -29,7 +29,7 @@ case "$TIER" in
   *) echo "unknown tier: $TIER" >&2; exit 2 ;;
 esac
 
-CA_URL="${CA_URL:-https://100.106.97.34:9000}"
+CA_URL="${CA_URL:-${SITE_CA_URL}}"
 ROOT="${ROOT:-$HOME/.step/certs/root_ca.crt}"
 OUT="${OUT:-./out/$DEV}"
 mkdir -p "$OUT"

@@ -77,7 +77,7 @@ def _run(*args: str, session: str | None = None,
 
 @dataclass
 class BwClient:
-    server: str  # e.g. https://orangepi6.humpback-krait.ts.net:8443/vault
+    server: str  # e.g. https://cvc.example.ts.net:8443/vault (site vault_url)
 
     def _status(self) -> dict:
         """Return parsed output of `bw status`. Never raises."""

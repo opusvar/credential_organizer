@@ -33,7 +33,7 @@ def base() -> dict:
         "version": 1,
         "systems": {
             "vaultwarden": {"kind": "credential-store"},
-            "ha-mqtt": {"kind": "mqtt", "host": "192.168.1.208", "port": 1883},
+            "ha-mqtt": {"kind": "mqtt", "host": "10.0.0.10", "port": 1883},
             "workers": {"kind": "http", "hosts": ["100.73.65.49"]},
         },
         "roles": {
@@ -60,7 +60,7 @@ def base() -> dict:
             "billing-agent": {
                 "roles": ["billing", "billing-audit"],
                 "token_sha256": TOKEN_HASH,
-                "owner": "nathan",
+                "owner": "alex",
             },
             "old-agent": {
                 "roles": ["billing"],
@@ -93,7 +93,7 @@ def test_parse_valid_model():
     assert not reg.systems["workers"].enforced
     assert reg.systems["workers"].attrs["hosts"] == ["100.73.65.49"]
     agent = reg.agents["billing-agent"]
-    assert agent.owner == "nathan" and agent.active(TODAY)
+    assert agent.owner == "alex" and agent.active(TODAY)
     assert not reg.agents["old-agent"].active(TODAY)
     m = reg.machines["garage-temp"]
     assert m.auth.type == "mqtt-user" and m.auth.username == "garage-temp"

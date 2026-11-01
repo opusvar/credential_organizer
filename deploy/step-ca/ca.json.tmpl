@@ -5,8 +5,8 @@
   "key": "/home/step/secrets/intermediate_ca_key",
   "address": ":9000",
   "dnsNames": [
-    "100.106.97.34",
-    "orangepi6.humpback-krait.ts.net",
+    "${SITE_NODE_IP}",
+    "${SITE_BASE_DOMAIN}",
     "localhost"
   ],
   "logger": {
@@ -20,7 +20,7 @@
     "enabled": true,
     "generateOnRevoke": true,
     "cacheDuration": "24h",
-    "idpURL": "https://100.106.97.34:9000/1.0/crl"
+    "idpURL": "${SITE_CA_URL}/1.0/crl"
   },
   "authority": {
     "claims": {
@@ -130,7 +130,7 @@
         "clientSecret": "__OIDC_CLIENT_SECRET__",
         "configurationEndpoint": "https://AUTHENTIK_HOST/application/o/step-ca/.well-known/openid-configuration",
         "admins": [
-          "nathan.smuckler@gmail.com"
+          "${SITE_CA_ADMIN_EMAIL}"
         ],
         "listenAddress": ":10000",
         "claims": {

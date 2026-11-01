@@ -10,10 +10,10 @@
 
 set -uo pipefail
 
-BROKER_IP="100.106.97.34"
+BROKER_IP="${SITE_NODE_IP}"
 BROKER_PORT="8710"
 NAMESPACE="cvc"
-VW_URL="https://orangepi6.humpback-krait.ts.net:8443/vault"
+VW_URL="${SITE_VAULT_URL}"
 KUBECTL="${KUBECTL:-kubectl}"
 AGENT_ID="${CVC_SMOKE_AGENT:-playwright-example}"
 TOKEN_FILE="${CVC_TOKEN_FILE:-$HOME/.config/cvc/smoke-token}"
@@ -77,8 +77,8 @@ else
     SPEC=$($KUBECTL -n "$NAMESPACE" get pod "$POD" -o json 2>/dev/null)
 
     # hostAliases
-    if echo "$SPEC" | python3 -c "import sys,json; s=json.load(sys.stdin); aliases=[h for a in s['spec'].get('hostAliases',[]) for h in a.get('hostnames',[])] if 'hostAliases' in s['spec'] else []; exit(0 if 'orangepi6.humpback-krait.ts.net' in aliases else 1)" 2>/dev/null; then
-        ok "hostAliases: orangepi6.humpback-krait.ts.net present"
+    if echo "$SPEC" | python3 -c "import sys,json; s=json.load(sys.stdin); aliases=[h for a in s['spec'].get('hostAliases',[]) for h in a.get('hostnames',[])] if 'hostAliases' in s['spec'] else []; exit(0 if '${SITE_BASE_DOMAIN}' in aliases else 1)" 2>/dev/null; then
+        ok "hostAliases: ${SITE_BASE_DOMAIN} present"
     else
         fail "hostAliases missing — Tailscale MagicDNS won't resolve inside pod"
         echo "    Fix: add hostAliases to broker-deployment.yaml and re-apply"

@@ -1,0 +1,16 @@
+# cvc site config example. Copy to ~/.config/cvc/site.yaml (or point $CVC_SITE / --site at
+# it) and fill in your installation's values. Do NOT commit your real site file to the
+# product repo; keep it in ~/.config/cvc/ or a private site repo. See docs/SITE-CONFIG.md.
+node_ip: 100.64.0.10              # services node tailnet IP (hostIP binds, ACL host, CA URL)
+lan_ip: 10.0.0.10                 # services node LAN IP (only referenced in docs/comments)
+base_domain: cvc.example.ts.net   # route hosts are <resource>.<base_domain>
+tailnet: example                  # tailnet name (example.ts.net)
+default_owner_ids: [alex]         # default --owner / --granted-by; omit to always require one
+ca_admin_email: admin@example.com # step-ca OIDC admin
+# Optional overrides (defaults shown):
+# broker_port: 8710
+# vault_port: 8443
+# ca_port: 9000
+# ca_url: https://<node_ip>:9000
+# vault_url: https://<base_domain>:8443/vault
+# namespaces: {cvc: cvc, pki: pki, auth: auth}

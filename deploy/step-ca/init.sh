@@ -15,7 +15,7 @@ set -euo pipefail
 umask 077
 
 OUT="${OUT:-./pki-init}"
-NAME="${CA_NAME:-Smuckler Home}"
+NAME="${CA_NAME:-cvc Home}"
 mkdir -p "$OUT"
 cd "$OUT"
 

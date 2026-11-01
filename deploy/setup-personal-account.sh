@@ -9,7 +9,7 @@
 #
 # Usage:
 #   bash deploy/setup-personal-account.sh [email]
-#   bash deploy/setup-personal-account.sh nathan@local
+#   bash deploy/setup-personal-account.sh alex@local
 #
 # After this script completes:
 #   1. Log in with bw CLI:    bw login <email>
@@ -18,9 +18,9 @@
 
 set -euo pipefail
 
-EMAIL="${1:-nathan@local}"
+EMAIL="${1:-alex@local}"
 
-VW_BASE="https://orangepi6.humpback-krait.ts.net:8443/vault"
+VW_BASE="${SITE_VAULT_URL}"
 COOKIE_FILE="$(mktemp /tmp/vw-admin-XXXXXX.cookie)"
 cleanup() { rm -f "$COOKIE_FILE"; }
 trap cleanup EXIT

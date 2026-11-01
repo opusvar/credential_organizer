@@ -72,7 +72,7 @@ cat <<MSG
 
 == Next steps ==
 1. Browser: Vaultwarden -> Account settings -> Security -> Two-step login -> FIDO2 WebAuthn
-   https://orangepi6.humpback-krait.ts.net:8443/vault   (register this key, name it "$KEY_ID")
+   ${SITE_VAULT_URL}   (register this key, name it "$KEY_ID")
 2. On the OPi, register the key (it also accepts ykman info JSON on stdin):
 
    cvc-access hwkey enroll --id "$KEY_ID" --serial "$SERIAL" --model "$MODEL" \\

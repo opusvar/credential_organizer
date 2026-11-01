@@ -57,29 +57,29 @@ def dev(owner, fpr, serial, hw=None):
 class Env:
     def __init__(self, tmp_path):
         self.pki = PKI()
-        self.leaf = {"nathan": self.pki.leaf(), "alice": self.pki.leaf("medium", "alice")}
+        self.leaf = {"alex": self.pki.leaf(), "alice": self.pki.leaf("medium", "alice")}
         self.reg = tmp_path / "registry.yaml"
         self.data = {
             "version": 1,
             "systems": {"workers": {"kind": "http"}},
             "roles": {"home-services": {"grants": [{"system": "workers", "paths": ["/"]}]}},
             "people": {
-                "nathan": {"email": "nathan@local", "tier": "owner"},
-                "dana": {"email": "dana@local", "tier": "owner", "granted_by": "nathan"},
-                "alice": {"email": "alice@local", "tier": "medium", "granted_by": "nathan"},
+                "alex": {"email": "alex@local", "tier": "owner"},
+                "dana": {"email": "dana@local", "tier": "owner", "granted_by": "alex"},
+                "alice": {"email": "alice@local", "tier": "medium", "granted_by": "alex"},
                 "lou": {"email": "lou@local", "tier": "low", "granted_by": "alice"},
                 "mia": {"email": "mia@local", "tier": "medium", "granted_by": "alice"},
             },
             "agents": {
-                "orch": {"tier": "high", "owner": "nathan", "token_sha256": "ab" * 32,
+                "orch": {"tier": "high", "owner": "alex", "token_sha256": "ab" * 32,
                          "roles": ["home-services"]},
                 "alice-bot": {"tier": "medium", "owner": "alice", "token_sha256": "cd" * 32,
                               "roles": ["home-services"]},
             },
-            "hardware_keys": {"yk-nathan": key("nathan", 111),
-                              "yk-nathan-backup": {**key("nathan", 112), "location": "home-safe"},
+            "hardware_keys": {"yk-alex": key("alex", 111),
+                              "yk-alex-backup": {**key("alex", 112), "location": "home-safe"},
                               "yk-dana": key("dana", 333)},
-            "devices": {"nathan-mac": dev("nathan", fp(self.leaf["nathan"]), "beef", "yk-nathan"),
+            "devices": {"alex-mac": dev("alex", fp(self.leaf["alex"]), "beef", "yk-alex"),
                         "alice-phone": dev("alice", fp(self.leaf["alice"]), "a1ce")},
         }
         self.save()
@@ -94,14 +94,14 @@ class Env:
     def load(self):
         return yaml.safe_load(self.reg.read_text())
 
-    def wizard(self, delegator="nathan", recipient="dana", sections=None, upto=8,
+    def wizard(self, delegator="alex", recipient="dana", sections=None, upto=8,
                factor=None, typed=None):
         w = flow.StartWizard(self.deps)
         pem = self.leaf[delegator].public_bytes(yaml_pem())
         w.step1_cert(delegator, pem, [self.pki.inter.public_bytes(yaml_pem())],
                      self.pki.root.public_bytes(yaml_pem()))
         self.reader.serial = "111"
-        w.step2_factor(factor if factor is not None else (None if delegator == "nathan"
+        w.step2_factor(factor if factor is not None else (None if delegator == "alex"
                                                           else PasskeyOK()))
         w.step3_elevate(Elev())
         w.step4_recipient(recipient)
@@ -132,23 +132,23 @@ def test_owner_to_owner_full(env):
     _, rec = env.wizard()
     assert rec.sections == list(SECTIONS)
     assert {p for p, ev, _ in env.notifier.sent if ev == "delegation-started"} == \
-        {"nathan", "dana"}
+        {"alex", "dana"}
     assert flow.status(env.deps, rec.id).startswith("[~] revocable")
     env.clock.hours(48)
     assert flow.status(env.deps, rec.id).startswith("[..] pending")
     lines, ex = [], Executor()
     flow.complete(env.deps, rec.id, env.inv, ex, out=lines.append)
     d = env.load()
-    assert d["hardware_keys"]["yk-nathan"]["owner"] == "dana"
-    assert d["hardware_keys"]["yk-nathan-backup"]["owner"] == "dana"
-    assert d["devices"]["nathan-mac"]["owner"] == "dana"
-    assert d["devices"]["nathan-mac"]["cert"]["status"] == "revoked"
+    assert d["hardware_keys"]["yk-alex"]["owner"] == "dana"
+    assert d["hardware_keys"]["yk-alex-backup"]["owner"] == "dana"
+    assert d["devices"]["alex-mac"]["owner"] == "dana"
+    assert d["devices"]["alex-mac"]["cert"]["status"] == "revoked"
     assert any("step ca revoke beef" in x for x in lines)
     assert d["agents"]["orch"]["owner"] == "dana" and d["agents"]["orch"]["tier"] == "high"
     assert d["people"]["alice"]["granted_by"] == "dana"
-    assert d["people"]["nathan"]["tier"] == "low"
+    assert d["people"]["alex"]["tier"] == "low"
     assert [s.action for s in ex.applied[0]] == ["copy-to-recipient", "copy-to-recipient"]
-    assert any("backup" in x and "yk-nathan-backup" in x for x in lines)
+    assert any("backup" in x and "yk-alex-backup" in x for x in lines)
     assert env.store.get(rec.id).status == "executed"
     assert flow.status(env.deps, rec.id).startswith("[ok] executed")
     assert env.store.verify_history()
@@ -163,7 +163,7 @@ def test_revoke_hour_47_ok(env):
     assert env.store.get(rec.id).status == "revoked"
     assert env.load() == env.data                             # nothing moved
     assert {p for p, ev, _ in env.notifier.sent if ev == "delegation-revoked"} == \
-        {"nathan", "dana"}
+        {"alex", "dana"}
 
 
 def test_revoke_hour_49_refused(env):
@@ -205,10 +205,10 @@ def test_complete_before_48h_refused(env):
 
 # ── D14 guard ───────────────────────────────────────────────────────────────
 def test_zero_owner_keys_refused_at_preview(env):
-    env.data["people"]["dana"]["tier"] = "high"              # nathan is the only owner
+    env.data["people"]["dana"]["tier"] = "high"              # alex is the only owner
     env.save()
     w, preview = env.wizard(recipient="alice", upto=5)
-    assert f"[{REVOKE_TEXT}] yk-nathan" in preview
+    assert f"[{REVOKE_TEXT}] yk-alex" in preview
     with pytest.raises(DelegationError, match="zero active owner hardware keys"):
         w.step6_select()
     assert w.step6_select(["vault", "devices"]) == ["vault", "devices"]
@@ -224,7 +224,7 @@ def test_zero_owner_keys_refused_at_execution(env):
         flow.complete(env.deps, rec.id, env.inv)
     assert env.store.get(rec.id).status == "refused"
     assert flow.status(env.deps, rec.id).startswith("[!] refused")
-    assert env.load()["hardware_keys"]["yk-nathan"]["owner"] == "nathan"
+    assert env.load()["hardware_keys"]["yk-alex"]["owner"] == "alex"
 
 
 # ── ceilings ────────────────────────────────────────────────────────────────
@@ -260,7 +260,7 @@ def test_high_orchestrator_to_medium_caps(env):
     d = env.load()
     assert d["agents"]["orch"] == {**env.data["agents"]["orch"], "owner": "alice",
                                    "tier": "medium"}
-    assert d["people"]["nathan"]["tier"] == "owner"
+    assert d["people"]["alex"]["tier"] == "owner"
 
 
 def test_guest_recipient_agent_expires_with_guest(env):
@@ -279,8 +279,8 @@ def test_deselect_hwkeys_keeps_keys(env):
     env.clock.hours(48)
     flow.complete(env.deps, rec.id, env.inv, out=lambda _: None)
     d = env.load()
-    assert d["hardware_keys"]["yk-nathan"]["owner"] == "nathan"
-    assert d["people"]["nathan"]["tier"] == "owner"
+    assert d["hardware_keys"]["yk-alex"]["owner"] == "alex"
+    assert d["people"]["alex"]["tier"] == "owner"
 
 
 def test_new_item_above_ceiling_revoked_at_execution(env):
@@ -312,16 +312,16 @@ def test_open_delegation_and_self(env):
     env.wizard()
     w = flow.StartWizard(env.deps)
     w.done = [1, 2, 3]
-    w.delegator = "nathan"
+    w.delegator = "alex"
     with pytest.raises(DelegationError, match="open delegation"):
         w.step4_recipient("alice")
     with pytest.raises(DelegationError, match="same person"):
-        w.step4_recipient("nathan")
+        w.step4_recipient("alex")
 
 
 def test_unregistered_key_refused(env):
     w = flow.StartWizard(env.deps)
-    w.step1_cert("nathan", env.leaf["nathan"].public_bytes(yaml_pem()),
+    w.step1_cert("alex", env.leaf["alex"].public_bytes(yaml_pem()),
                  [env.pki.inter.public_bytes(yaml_pem())], env.pki.root.public_bytes(yaml_pem()))
     env.reader.read = lambda: KeyReading("999", True)
     with pytest.raises(DelegationError, match="not registered"):

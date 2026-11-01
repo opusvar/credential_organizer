@@ -44,7 +44,7 @@ def full_pem_header(cert: x509.Certificate) -> str:
     return quote(cert.public_bytes(serialization.Encoding.PEM).decode())
 
 
-def ident_cert(tier: str, person: str = "nathan", device: str | None = "phone1"):
+def ident_cert(tier: str, person: str = "alex", device: str | None = "phone1"):
     uris = [f"urn:cvc:tier:{tier}", f"urn:cvc:person:{person}"]
     if device:
         uris.append(f"urn:cvc:device:{device}")
@@ -87,7 +87,7 @@ def test_extract_identity_both_encodings():
     c = ident_cert("medium")
     for enc in (traefik_header, full_pem_header):
         ident = extract_identity(load_cert(enc(c)))
-        assert (ident.tier, ident.person, ident.device) == ("medium", "nathan", "phone1")
+        assert (ident.tier, ident.person, ident.device) == ("medium", "alex", "phone1")
 
 
 def test_chain_takes_leaf():
@@ -99,7 +99,7 @@ def test_chain_takes_leaf():
 def test_allow_sets_headers(client):
     r = call(client, "wiki.home", ident_cert("high"))
     assert r.status_code == 200
-    assert r.headers["X-Cvc-Person"] == "nathan"
+    assert r.headers["X-Cvc-Person"] == "alex"
     assert r.headers["X-Cvc-Tier"] == "high"
     assert r.headers["X-Cvc-Device"] == "phone1"
 
@@ -141,7 +141,7 @@ def test_missing_tier_or_person_denied(client):
 def test_passkey_required_for_high_hosts(client, host):
     assert call(client, host, ident_cert("owner")).status_code == 403
     assert call(client, host, ident_cert("owner"), authentik="  ").status_code == 403
-    assert call(client, host, ident_cert("owner"), authentik="nathan").status_code == 200
+    assert call(client, host, ident_cert("owner"), authentik="alex").status_code == 200
 
 
 def test_passkey_not_required_for_lower_hosts(client):

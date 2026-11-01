@@ -13,7 +13,7 @@
 set -euo pipefail
 SERIAL="${1:?usage: revoke.sh <serial> [reason]}"
 REASON="${2:-device lost or retired}"
-CA_URL="${CA_URL:-https://100.106.97.34:9000}"
+CA_URL="${CA_URL:-${SITE_CA_URL}}"
 ROOT="${ROOT:-$HOME/.step/certs/root_ca.crt}"
 
 # Authenticates with the OIDC provisioner (admin email in ca.json "admins").

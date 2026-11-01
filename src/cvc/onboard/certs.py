@@ -9,11 +9,12 @@ from __future__ import annotations
 import shlex
 from dataclasses import dataclass
 
+from cvc import site as site_config
+
 ISSUE_P12 = "deploy/step-ca/issue-p12.sh"
 YK_ISSUE = "deploy/yubikey/issue-device-cert.sh"
 YK_ENROLL = "deploy/yubikey/enroll-mac.sh"
 TEMPLATE = "deploy/step-ca/templates/device-leaf.tpl"
-CA_URL = "https://100.106.97.34:9000"
 ROOT = "$HOME/.step/certs/root_ca.crt"
 
 _PROVISIONERS = {
@@ -48,9 +49,12 @@ class CertCommand:
         return f"{self.capture}=$({cmd})" if self.capture else cmd
 
 
-def cert_commands(person: str, device: str, tier: str, kind: str, storage: str
-                  ) -> list[CertCommand]:
-    """Commands that issue this device's cert. Phones get the .p12/.mobileconfig bundle."""
+def cert_commands(person: str, device: str, tier: str, kind: str, storage: str,
+                  ca_url: str | None = None) -> list[CertCommand]:
+    """Commands that issue this device's cert. Phones get the .p12/.mobileconfig bundle.
+
+    `ca_url` defaults to the loaded site config's step-ca URL."""
+    ca_url = ca_url or site_config.load().ca_url
     prov, dur = provisioner_for(tier)
     if storage == "yubikey-piv":
         # ACME device-attest-01: key generated on the YubiKey (slot 9a).
@@ -60,10 +64,10 @@ def cert_commands(person: str, device: str, tier: str, kind: str, storage: str
                              "--tier", tier))]
     out = f"./out/{device}/{device}"
     return [
-        CertCommand(("step", "ca", "token", device, "--provisioner", prov, "--ca-url", CA_URL,
+        CertCommand(("step", "ca", "token", device, "--provisioner", prov, "--ca-url", ca_url,
                      "--root", ROOT, "--set", f"person={person}", "--set", f"device={device}",
                      "--set", f"tier={tier}", "--not-after", dur), capture="TOKEN"),
         CertCommand(("step", "ca", "certificate", device, f"{out}.crt", f"{out}.key",
-                     "--token", '"$TOKEN"', "--ca-url", CA_URL, "--root", ROOT,
+                     "--token", '"$TOKEN"', "--ca-url", ca_url, "--root", ROOT,
                      "--not-after", dur)),
     ]

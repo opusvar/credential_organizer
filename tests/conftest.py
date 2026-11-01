@@ -2,6 +2,7 @@
 import os
 
 import pytest
+import yaml
 
 # Obviously-fake Chrome password export (columns: name,url,username,password,note).
 # Includes a duplicate (same host+username via www/non-www) to exercise dedup.
@@ -46,6 +47,20 @@ def _isolate_env(tmp_path, monkeypatch):
     for var, sub in (("XDG_CONFIG_HOME", ".config"), ("XDG_DATA_HOME", ".local/share"),
                      ("XDG_CACHE_HOME", ".cache"), ("XDG_STATE_HOME", ".local/state")):
         monkeypatch.setenv(var, str(home / sub))
+    # Generic test site: never the developer's ~/.config/cvc/site.yaml (HOME/XDG are
+    # redirected above, and CVC_SITE points at this synthetic file).
+    site = tmp_path / "_site.yaml"
+    site.write_text(yaml.safe_dump(TEST_SITE), encoding="utf-8")
+    monkeypatch.setenv("CVC_SITE", str(site))
     yield
     os.environ.clear()
     os.environ.update(saved)
+
+
+TEST_SITE = {
+    "node_ip": "100.64.0.10",
+    "lan_ip": "10.0.0.10",
+    "base_domain": "cvc.example.ts.net",
+    "tailnet": "example",
+    "default_owner_ids": ["alex"],
+}

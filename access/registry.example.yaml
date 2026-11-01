@@ -20,7 +20,7 @@ version: 1
 systems:
   # Enforced kinds (v1): credential-store, mqtt.
   vaultwarden: {kind: credential-store, data: private, action: act}  # reached via the cvc broker
-  ha-mqtt: {kind: mqtt, host: 192.168.1.208, port: 1883, data: internal, action: act}
+  ha-mqtt: {kind: mqtt, host: 10.0.0.10, port: 1883, data: internal, action: act}
   # Documented-only kinds (http, cluster, ssh, service): free-form fields, no generator,
   # `cvc-access check` reports their grants as "unenforced".
   workers: {kind: http, hosts: [100.73.65.49, 100.127.180.96], data: internal, action: write}
@@ -73,14 +73,14 @@ agents:          # AI agents (broker principals). All agents live on tailnet `ag
     token_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
     tier: medium
     tailnet: agents
-    owner: nathan
-    sponsor: nathan
+    owner: alex
+    sponsor: alex
   personal-dashboard:
     roles: [worker-caller, backup-runner]
     token_sha256: "1111111111111111111111111111111111111111111111111111111111111111"
     tier: high
     tailnet: agents
-    owner: nathan
+    owner: alex
     expires: 2027-01-31      # optional; after this date the agent gets allow: []
   visitor-helper:           # guest-sponsored: requested medium, effective low
     roles: [worker-caller-read]
@@ -105,11 +105,11 @@ machines:        # sensors/devices: one MQTT user each
 # Manage with: cvc-access hwkey enroll|revoke, cvc-access device add|set-cert|transfer|revoke
 # (these edits rewrite the file: key order is kept, comments are not).
 people:
-  nathan: {email: nathan@local, tier: owner, tailnet: owner}
-  sam: {email: sam@local, tier: medium, tailnet: family, granted_by: nathan}
+  alex: {email: alex@local, tier: owner, tailnet: owner}
+  sam: {email: sam@local, tier: medium, tailnet: family, granted_by: alex}
   # Guests: tailnet guests. `cvc-access guest add` defaults expires to today + 5 days;
   # `cvc-access guest checkout <id>` ends access now and revokes their sponsored agents.
-  visitor: {tier: guest-long, tailnet: guests, expires: 2026-12-31, granted_by: nathan}
+  visitor: {tier: guest-long, tailnet: guests, expires: 2026-12-31, granted_by: alex}
 
 # ── Resource catalog: human-facing services behind the tier gate (cvc.tiergate) ──
 # kind: media | ha | dashboard | library | admin. min_tier: a people tier (see above).
@@ -124,7 +124,7 @@ resources:
 
 hardware_keys:   # YubiKeys: Vaultwarden FIDO2 2FA, PIV device certs, vault recovery (D11)
   yk-primary:
-    owner: nathan
+    owner: alex
     model: "YubiKey 5C NFC"
     serial: 12345678             # public identifier, not a secret
     uses: [fido2-vaultwarden, piv-device-cert, recovery]
@@ -133,7 +133,7 @@ hardware_keys:   # YubiKeys: Vaultwarden FIDO2 2FA, PIV device certs, vault reco
     status: active               # active | lost | revoked | retired
     role: primary                # primary | backup; each owner needs exactly one primary
   yk-backup:
-    owner: nathan
+    owner: alex
     model: "YubiKey 5 NFC"
     serial: 87654321
     uses: [fido2-vaultwarden, recovery]
@@ -143,8 +143,8 @@ hardware_keys:   # YubiKeys: Vaultwarden FIDO2 2FA, PIV device certs, vault reco
     role: backup
 
 devices:         # principals: they hold roles like agents and machines
-  nathan-iphone:
-    owner: nathan
+  alex-iphone:
+    owner: alex
     kind: phone                  # phone | laptop | desktop | tablet
     cert:
       storage: p12               # p12 | yubikey-piv
@@ -156,8 +156,8 @@ devices:         # principals: they hold roles like agents and machines
     history:                     # append-only, in date order
       - {date: 2026-10-01, event: issued, cert_serial: "3f2a9c01"}
     roles: [worker-caller]
-  nathan-mac:
-    owner: nathan
+  alex-mac:
+    owner: alex
     kind: laptop
     cert:
       storage: yubikey-piv       # key generated on-key in PIV slot 9a, attested

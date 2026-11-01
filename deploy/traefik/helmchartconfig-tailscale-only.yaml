@@ -1,14 +1,14 @@
 # k3s bundled Traefik: restrict entrypoints to the Tailscale IP — NOT applied (finding F5).
 #
 # Today k3s exposes Traefik 80/443 through a klipper-lb (svclb) LoadBalancer Service, which
-# binds every node address including the LAN IP 192.168.1.208. This override:
+# binds every node address including the LAN IP ${SITE_LAN_IP}. This override:
 #   * turns the Service into ClusterIP (svclb pods disappear -> no 0.0.0.0 binding), and
-#   * publishes web/websecure as hostPorts bound to 100.106.97.34 only.
+#   * publishes web/websecure as hostPorts bound to ${SITE_NODE_IP} only.
 # k3s watches /var/lib/rancher/k3s/server/manifests/; to apply later:
 #   sudo cp deploy/traefik/helmchartconfig-tailscale-only.yaml \
 #     /var/lib/rancher/k3s/server/manifests/traefik-config.yaml
-# Verify afterwards: `sudo ss -ltnp | grep -E ':(80|443) '` shows only 100.106.97.34, and
-# `curl -k https://192.168.1.208/` from the LAN fails. Value keys follow the Traefik Helm chart
+# Verify afterwards: `sudo ss -ltnp | grep -E ':(80|443) '` shows only ${SITE_NODE_IP}, and
+# `curl -k https://${SITE_LAN_IP}/` from the LAN fails. Value keys follow the Traefik Helm chart
 # shipped with k3s v1.36 (ports.<name>.hostPort/hostIP, service.type); re-check against
 # `kubectl -n kube-system get helmchart traefik -o yaml` before applying.
 apiVersion: helm.cattle.io/v1
@@ -23,14 +23,14 @@ spec:
     ports:
       web:
         hostPort: 80
-        hostIP: 100.106.97.34
+        hostIP: ${SITE_NODE_IP}
         redirections:
           entryPoint:
             to: websecure
             scheme: https
       websecure:
         hostPort: 443
-        hostIP: 100.106.97.34
+        hostIP: ${SITE_NODE_IP}
     additionalArguments:
       # Never trust client-supplied X-Forwarded-* (strip middleware handles identity headers).
       - "--entryPoints.websecure.forwardedHeaders.insecure=false"
