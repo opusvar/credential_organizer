@@ -5,6 +5,7 @@ import datetime as dt
 import re
 
 from cvc.access.builders import register_builder
+from cvc.access.catalog import can_reach
 from cvc.access.model import Registry
 
 SOON_DAYS = 30
@@ -270,6 +271,33 @@ def build_graph(registry: Registry, today: dt.date | None = None) -> str:
             out.append(f"| {_cell(kid)} | {_cell(k.owner)} | {_cell(k.model)} | "
                        f"{_cell(', '.join(k.uses))} | {_cell(k.location)} | {_cell(k.status)} | "
                        f"{on_key.get(kid, 0)} |")
+    if registry.resources:
+        out += ["", "## Resources", "",
+                "| id | name | host | kind | min tier | ha level | passkey |",
+                "|---|---|---|---|---|---|---|"]
+        for rid in sorted(registry.resources):
+            r = registry.resources[rid]
+            out.append(f"| {_cell(rid)} | {_cell(r.name)} | {_cell(r.host)} | {_cell(r.kind)} | "
+                       f"{_cell(r.min_tier)} | {_cell(r.ha_level or '-')} | "
+                       f"{'yes' if r.passkey_required else 'no'} |")
+        if registry.people:
+            rids = sorted(registry.resources)
+            out += ["", "## What each person can reach", "",
+                    ("Same rule as the tier gate: active person, tier >= resource min tier. "
+                     "`yes*` = passkey (Authentik) also required."), "",
+                    "| person | tier | " + " | ".join(_cell(r) for r in rids) + " |",
+                    "|---|---|" + "---|" * len(rids)]
+            for uid in sorted(registry.people):
+                u = registry.people[uid]
+                cells = []
+                for rid in rids:
+                    r = registry.resources[rid]
+                    ok = can_reach(u, r, today)
+                    cells.append(("yes*" if r.passkey_required else "yes") if ok else "-")
+                tier = u.tier or "-"
+                if u.expires is not None and today > u.expires:
+                    tier += " (expired)"
+                out.append(f"| {_cell(uid)} | {_cell(tier)} | " + " | ".join(cells) + " |")
     out += ["", "## Systems", "", "| id | kind | enforced |", "|---|---|---|"]
     for sid in sorted(registry.systems):
         s = registry.systems[sid]

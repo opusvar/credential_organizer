@@ -27,7 +27,11 @@ Rules enforced:
 Nothing is allowed implicitly.
 
 Agent-tier fields (optional, see tiers.py):
-    tier: scoped | assistant | high     # absent/unknown -> scoped
+    tier: scoped | low | medium | high | assistant   # absent/unknown -> scoped
+    require_session_token: true         # optional; also allowed at top level, or env
+                                        # CVC_REQUIRE_SESSION_TOKEN=1 (global). When on, the
+                                        # long-lived service token may only mint session
+                                        # tokens; fetch/backup reject it.
     on_behalf_of: "nathan"              # required for tier assistant (dual attribution)
     allow entries may set `physical: true` — for tier high such requests need human approval.
 """
@@ -35,6 +39,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import re
 from dataclasses import dataclass
 
@@ -77,6 +82,7 @@ def _sha256(s: str) -> str:
 class Acl:
     def __init__(self, data: dict):
         self._agents: dict = (data or {}).get("agents", {}) or {}
+        self._require_session_token = bool((data or {}).get("require_session_token"))
 
     @classmethod
     def load(cls, path: str) -> Acl:
@@ -120,6 +126,18 @@ class Acl:
         """Agent tier from the ACL; absent or unrecognised -> 'scoped'."""
         agent = self._agents.get(agent_id) or {}
         return normalize_tier(agent.get("tier"))
+
+    def requires_session_token(self, agent_id: str) -> bool:
+        """True if this agent must use a session token (not its service token) for
+        fetch/backup. Opt-in: per-agent flag, ACL top-level flag, or
+        CVC_REQUIRE_SESSION_TOKEN=1. Default off."""
+        if os.environ.get("CVC_REQUIRE_SESSION_TOKEN", "").strip().lower() in (
+                "1", "true", "yes", "on"):
+            return True
+        if self._require_session_token:
+            return True
+        agent = self._agents.get(agent_id) or {}
+        return bool(agent.get("require_session_token"))
 
     def on_behalf_of(self, agent_id: str) -> str | None:
         agent = self._agents.get(agent_id) or {}

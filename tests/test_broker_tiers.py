@@ -186,3 +186,98 @@ def test_audit_obo_tamper_detected(tmp_path):
     p = tmp_path / "a.jsonl"
     p.write_text(p.read_text().replace("nathan", "mallory"))
     assert not log.verify()
+
+
+# --- low / medium tiers --------------------------------------------------------------
+
+def test_low_medium_tiers_and_ladder():
+    from cvc.broker.tiers import tier_rank
+    assert normalize_tier("low") == "low"
+    assert normalize_tier("MEDIUM") == "medium"
+    assert normalize_tier("bogus") == "scoped"
+    assert normalize_tier(None) == "scoped"
+    assert TIER_TTL == {"scoped": 900, "low": 900, "medium": 600, "high": 300,
+                        "assistant": 900}
+    assert (tier_rank("scoped") < tier_rank("low") < tier_rank("medium")
+            < tier_rank("high"))
+    assert tier_rank("assistant") == tier_rank("medium")
+
+
+def test_medium_session_ttl_capped():
+    s = SessionStore(clock=lambda: 0.0)
+    _, rec = s.issue("a", "medium", [C1], ttl=9999)
+    assert rec.expires == 600
+    _, rec = s.issue("a", "low", [C1])
+    assert rec.expires == MAX_TTL
+
+
+def test_acl_tier_low_medium():
+    acl = Acl({"agents": {"l": {"tier": "low"}, "m": {"tier": "medium"}, "x": {}}})
+    assert acl.tier("l") == "low" and acl.tier("m") == "medium" and acl.tier("x") == "scoped"
+
+
+# --- require_session_token -----------------------------------------------------------
+
+def _enforce_env(tmp_path, monkeypatch, data):
+    acl = Acl(data)
+    audit = AuditLog(str(tmp_path / "audit.jsonl"))
+    sessions = SessionStore()
+    bw = MagicMock()
+    bw.get_item.return_value = {"login": {"password": SECRET}}
+    a = app_mod.app
+    a.dependency_overrides.update({
+        app_mod._acl: lambda: acl, app_mod._audit: lambda: audit, app_mod._bw: lambda: bw,
+        app_mod._sessions: lambda: sessions, app_mod._approvals: lambda: ApprovalStore(),
+    })
+    monkeypatch.setattr(app_mod, "_ops", lambda: MagicMock())
+    return TestClient(a, raise_server_exceptions=False)
+
+
+def _mint(client, agent, tok, creds):
+    r = client.post("/v1/tokens/issue", json={"credentials": creds},
+                    headers={"X-Agent-Id": agent, "Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200, r.text
+    return r.json()["token"]
+
+
+def _data(top=False, agent_flag=False):
+    agent = {"token_sha256": _sha("t-a"), "tier": "low",
+             "allow": [{"credential": C1, "purposes": ["*"]},
+                       {"credential": "backup", "purposes": ["*"]}]}
+    if agent_flag:
+        agent["require_session_token"] = True
+    d = {"agents": {"a": agent}}
+    if top:
+        d["require_session_token"] = True
+    return d
+
+
+@pytest.mark.parametrize("top,agent_flag,envvar", [
+    (True, False, False), (False, True, False), (False, False, True)])
+def test_require_session_token_rejects_service_token(tmp_path, monkeypatch,
+                                                     top, agent_flag, envvar):
+    if envvar:
+        monkeypatch.setenv("CVC_REQUIRE_SESSION_TOKEN", "1")
+    else:
+        monkeypatch.delenv("CVC_REQUIRE_SESSION_TOKEN", raising=False)
+    client = _enforce_env(tmp_path, monkeypatch, _data(top, agent_flag))
+    try:
+        assert _fetch(client, "a", "t-a", C1).status_code == 401
+        r = client.post("/v1/backup/trigger", json={"purpose": "p"},
+                        headers={"X-Agent-Id": "a", "Authorization": "Bearer t-a"})
+        assert r.status_code == 401
+        sess = _mint(client, "a", "t-a", [C1])
+        assert _fetch(client, "a", sess, C1).status_code == 200
+        log = (tmp_path / "audit.jsonl").read_text()
+        assert sess not in log and SECRET not in log
+    finally:
+        app_mod.app.dependency_overrides.clear()
+
+
+def test_require_session_token_default_off(tmp_path, monkeypatch):
+    monkeypatch.delenv("CVC_REQUIRE_SESSION_TOKEN", raising=False)
+    client = _enforce_env(tmp_path, monkeypatch, _data())
+    try:
+        assert _fetch(client, "a", "t-a", C1).status_code == 200
+    finally:
+        app_mod.app.dependency_overrides.clear()
