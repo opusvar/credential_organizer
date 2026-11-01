@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -40,6 +41,9 @@ GUEST_TIERS = frozenset({"guest-short", "guest-long"})
 AGENT_TIERS = ("scoped", "low", "medium", "high", "assistant")
 TAILNETS = ("owner", "family", "long-guests", "short-guests", "agents", "machines")
 HA_ACCESS = ("none", "view", "limited-control")
+RESOURCE_KINDS = ("media", "ha", "dashboard", "library", "admin")
+PASSKEY_TIERS = frozenset({"high", "admin", "owner"})
+_RESOURCE_KEYS = frozenset({"name", "host", "url", "kind", "min_tier", "ha_level"})
 _HEX = re.compile(r"^[0-9a-f]+$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -169,6 +173,22 @@ class Device(Principal):
 
 
 @dataclass(frozen=True)
+class Resource:
+    """A human-facing service behind the tier gate. `min_tier` is validated by check."""
+    id: str
+    name: str
+    host: str                        # lowercase hostname (from `host`, else from `url`)
+    kind: str                        # RESOURCE_KINDS
+    min_tier: str
+    url: str | None = None
+    ha_level: str | None = None      # HA_ACCESS minus "none"; kind ha only
+
+    @property
+    def passkey_required(self) -> bool:
+        return self.min_tier in PASSKEY_TIERS
+
+
+@dataclass(frozen=True)
 class Registry:
     version: int
     systems: dict[str, System]
@@ -178,6 +198,7 @@ class Registry:
     people: dict[str, Person] = field(default_factory=dict)
     hardware_keys: dict[str, HardwareKey] = field(default_factory=dict)
     devices: dict[str, Device] = field(default_factory=dict)
+    resources: dict[str, Resource] = field(default_factory=dict)
 
     def principals(self) -> Iterator[Principal]:
         yield from self.agents.values()
@@ -297,7 +318,7 @@ def parse_registry(data: Any) -> Registry:
         errs.append(f"version: expected 1, got {version!r}")
     for k in data:
         if k not in {"version", "systems", "roles", "agents", "machines", "people",
-                     "hardware_keys", "devices"}:
+                     "hardware_keys", "devices", "resources"}:
             errs.append(f"{k}: unknown top-level key")
 
     systems: dict[str, System] = {}
@@ -373,9 +394,51 @@ def parse_registry(data: Any) -> Registry:
                                         location=raw.get("location"))
 
     people, hwkeys, devices = _parse_humans(data, roles, seen, errs)
+    resources = _parse_resources(data, errs)
     if errs:
         raise RegistryError(errs)
-    return Registry(1, systems, roles, agents, machines, people, hwkeys, devices)
+    return Registry(1, systems, roles, agents, machines, people, hwkeys, devices, resources)
+
+
+def _parse_resources(data: dict, errs: list[str]) -> dict[str, Resource]:
+    """Structural validation only; unknown tiers and duplicate hosts are check findings."""
+    out: dict[str, Resource] = {}
+    for rid, raw in _mapping(data, "resources", errs).items():
+        p = f"resources.{rid}"
+        if not isinstance(raw, dict):
+            errs.append(f"{p}: must be a mapping")
+            continue
+        for k in raw:
+            if k not in _RESOURCE_KEYS:
+                errs.append(f"{p}: unknown field {k!r}")
+        kind = _choice(raw.get("kind"), RESOURCE_KINDS, f"{p}.kind", errs)
+        url = raw.get("url")
+        host = raw.get("host")
+        if url is not None:
+            url = str(url)
+            parsed = urlsplit(url)
+            if parsed.scheme not in ("http", "https") or not parsed.hostname:
+                errs.append(f"{p}.url: must be an http(s) URL, got {url!r}")
+            elif host is None:
+                host = parsed.hostname
+        if not host or not isinstance(host, str):
+            errs.append(f"{p}: requires a host or url")
+            host = ""
+        host = host.strip().lower()
+        if ":" in host or "/" in host:
+            errs.append(f"{p}.host: hostname only (no port or path), got {host!r}")
+        min_tier = raw.get("min_tier")
+        if not isinstance(min_tier, str) or not min_tier:
+            errs.append(f"{p}.min_tier: required")
+            min_tier = ""
+        ha_level = raw.get("ha_level")
+        if ha_level is not None:
+            ha_level = _choice(ha_level, HA_ACCESS[1:], f"{p}.ha_level", errs)
+            if kind != "ha":
+                errs.append(f"{p}.ha_level: only valid for kind ha")
+        out[rid] = Resource(rid, str(raw.get("name") or rid), host, kind, min_tier, url,
+                            ha_level)
+    return out
 
 
 def _choice(v: Any, allowed: tuple[str, ...], path: str, errs: list[str]) -> str:

@@ -41,6 +41,25 @@ def check_registry(registry: Registry, today: dt.date | None = None) -> list[Fin
                                    "(documented only)"))
     out += _check_devices(registry, today)
     out += check_tiers(registry)
+    out += check_resources(registry)
+    return out
+
+
+def check_resources(registry: Registry) -> list[Finding]:
+    """Resource catalog: min_tier must be on the person ladder; hosts must be unique."""
+    out: list[Finding] = []
+    hosts: dict[str, str] = {}
+    for rid in sorted(registry.resources):
+        r = registry.resources[rid]
+        path = f"resources.{rid}"
+        if r.min_tier not in PERSON_TIERS:
+            out.append(Finding("error", path, f"unknown min_tier {r.min_tier!r} "
+                                              f"(one of {', '.join(PERSON_TIERS)})"))
+        if r.host in hosts:
+            out.append(Finding("error", path, f"duplicate host {r.host!r} "
+                                              f"(also resources.{hosts[r.host]})"))
+        else:
+            hosts[r.host] = rid
     return out
 
 

@@ -15,6 +15,8 @@ flowchart LR
     end
     subgraph people["People"]
         u_nathan["nathan<br/>tier: owner"]
+        u_sam["sam<br/>tier: medium"]
+        u_visitor["visitor<br/>tier: guest-long"]
     end
     subgraph hwkeys["Hardware keys"]
         k_yk_backup["yk-backup<br/>home-safe"]
@@ -65,7 +67,7 @@ flowchart LR
     classDef soon fill:#fed7aa,stroke:#c2410c,color:#0f172a,stroke-width:2px
     class s_ha_mqtt,s_vaultwarden enforced
     class k_yk_backup,k_yk_primary hwkey
-    class u_nathan person
+    class u_nathan,u_sam,u_visitor person
     class p_personal_dashboard,p_playwright_billing,p_cvc_remind,p_garage_temp,p_home_assistant,p_nathan_iphone,p_nathan_mac principal
     class r_backup_runner,r_billing_agent,r_cvc_remind_publisher,r_home_assistant,r_sensor_publish,r_worker_caller role
     class s_workers unenforced
@@ -90,6 +92,8 @@ Solid blue = enforced; dashed = documented only (not enforced); grey = expired; 
 | id | tier | tailnet | ha | expires | granted by |
 |---|---|---|---|---|---|
 | nathan | owner | owner | none | - | - |
+| sam | medium | family | none | - | nathan |
+| visitor | guest-long | long-guests | none | 2026-12-31 | nathan |
 
 ## Devices
 
@@ -104,6 +108,26 @@ Solid blue = enforced; dashed = documented only (not enforced); grey = expired; 
 |---|---|---|---|---|---|---|
 | yk-backup | nathan | YubiKey 5 NFC | fido2-vaultwarden, recovery | home-safe | active | 0 |
 | yk-primary | nathan | YubiKey 5C NFC | fido2-vaultwarden, piv-device-cert, recovery | on-person | active | 1 |
+
+## Resources
+
+| id | name | host | kind | min tier | ha level | passkey |
+|---|---|---|---|---|---|---|
+| books | Calibre library | books.example.home | library | guest-long | - | no |
+| dashboard | Personal dashboard | dash.example.home | dashboard | high | - | yes |
+| ha | Home Assistant | ha.example.home | ha | medium | limited-control | no |
+| media | Jellyfin | media.example.home | media | media-only | - | no |
+| portainer | Portainer | portainer.example.home | admin | admin | - | yes |
+
+## What each person can reach
+
+Same rule as the tier gate: active person, tier >= resource min tier. `yes*` = passkey (Authentik) also required.
+
+| person | tier | books | dashboard | ha | media | portainer |
+|---|---|---|---|---|---|---|
+| nathan | owner | yes | yes* | yes | yes | yes* |
+| sam | medium | yes | - | yes | yes | - |
+| visitor | guest-long | yes | - | - | - | - |
 
 ## Systems
 
