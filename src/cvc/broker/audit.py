@@ -24,6 +24,7 @@ class AuditEvent:
     credential: str
     purpose: str
     outcome: str          # "allow" | "deny:<reason>"
+    on_behalf_of: str | None = None   # assistant tier: the person the agent acts for
     ts: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
@@ -55,6 +56,8 @@ class AuditLog:
                 prev = self._last_hash()
                 body = {"ts": ev.ts, "agent": ev.agent, "credential": ev.credential,
                         "purpose": ev.purpose, "outcome": ev.outcome, "prev": prev}
+                if ev.on_behalf_of is not None:
+                    body["on_behalf_of"] = ev.on_behalf_of
                 digest = hashlib.sha256((prev + json.dumps(body, sort_keys=True)).encode()).hexdigest()
                 body["hash"] = digest
                 fh.write(json.dumps(body) + "\n")
@@ -86,6 +89,8 @@ class AuditLog:
                         return False
                     expect = rec.get("hash")
                     check = {k: rec[k] for k in ("ts", "agent", "credential", "purpose", "outcome", "prev")}
+                    if "on_behalf_of" in rec:
+                        check["on_behalf_of"] = rec["on_behalf_of"]
                     digest = hashlib.sha256((prev + json.dumps(check, sort_keys=True)).encode()).hexdigest()
                     if rec.get("prev") != prev or digest != expect:
                         return False
