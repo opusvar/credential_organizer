@@ -26,7 +26,11 @@ from .policy import CredRecord, Finding, evaluate
 def _parse_rotated(item: dict) -> datetime | None:
     """Extract last password-change date from a vault item if present."""
     try:
-        raw = item.get("revisionDate") or item.get("creationDate")
+        # Not item["revisionDate"]: it resets on ANY edit (rename, note, folder move), which
+        # would hide a stale password. passwordRevisionDate changes only with the password;
+        # it is null if never changed, so fall back to creationDate.
+        login = item.get("login") or {}
+        raw = login.get("passwordRevisionDate") or item.get("creationDate")
         if raw:
             return datetime.fromisoformat(raw.rstrip("Z")).replace(tzinfo=timezone.utc)
     except (ValueError, TypeError):
