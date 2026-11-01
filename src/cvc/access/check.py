@@ -151,7 +151,8 @@ def _check_devices(registry: Registry, today: dt.date) -> list[Finding]:
         return out
     active = [k for k in registry.hardware_keys.values() if k.usable]
     owner_keys = [k for k in active
-                  if (p := registry.people.get(k.owner)) is not None and p.tier == "owner"]
+                  if (p := registry.people.get(k.owner)) is not None and p.tier == "owner"
+                  and p.status == "active"]
     if not owner_keys:
         out.append(Finding("error", "hardware_keys",
                            "no active hardware key belongs to an owner-tier person; the owner "

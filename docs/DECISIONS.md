@@ -243,3 +243,47 @@ owner-tier person.
   `history` entry on the key and prints the ykman / Vaultwarden / `step ca revoke` steps. It
   never runs them.
 - Hardware key status gains `suspended`. Certs on a suspended key stay valid in the registry.
+
+## D15 — Owner takeover on death or incapacity  **[DECIDED 2026-11-01]**
+**Problem:** if an owner dies or is incapacitated, another owner must be able to take over their
+vault and cvc account. No single stolen factor should give that power, and a living but absent
+owner needs time to object.
+**Decision:** `cvc takeover start` runs a six-step wizard. Each step is verified before the next:
+1. The initiator's step-ca device cert must chain to the configured root and carry
+   `urn:cvc:tier:owner` and `urn:cvc:person:<initiator>`. Its fingerprint must be an active,
+   unexpired cert on a device the registry says the initiator owns.
+2. The initiator's YubiKey: PIV 9a attestation (signed by the key's f9 intermediate, same
+   serial) and an active owner key registered to the initiator.
+3. Elevation: an Authentik passkey (OAuth device flow) or the Vaultwarden master password
+   (prelogin + password grant). The secret is prompted for, used, and dropped. It is never
+   logged or stored.
+4. Target: a different active owner-tier person with no open takeover.
+5. Possession of the target's factor, one of:
+   - **path `key`**: any active owner key registered to the target, primary or backup (D11).
+     Completion is allowed from day 90.
+   - **path `recovery-password`**: the target's sealed recovery password, set in advance with
+     `cvc takeover recovery-set <owner>`, which needs that owner's YubiKey. Only a scrypt hash
+     is stored (`recovery.json`, mode 0600). Completion is allowed from day 180.
+6. Start: initiate the target's pre-provisioned Vaultwarden Emergency Access grants to the
+   initiator: View (15 d) and Takeover (90 d, or 180 d on the recovery path). If they are
+   missing or the wait time is wrong, the start is refused. Grants must be set up ahead of time.
+
+Timeline from initiation:
+- Day 0: the target sees a banner (`GET /v1/takeover/banner`). Notifications go out on days
+  0/7/14/85, plus day 170 on the recovery path. Each one says which path was used.
+- Day 15+: read-only View access on both paths. It is reversible, because a cancel rejects the
+  grants. View is read-only, so the longer recovery wait protects only the irreversible step.
+- Day 90+ (or 180+): `cvc takeover complete`, which needs the initiator's key again. It runs
+  Vaultwarden takeover plus a registry edit:
+  - the target's keys transfer to the initiator, with history
+  - the target's device certs are revoked; `step ca revoke` is printed, never run
+  - assistant agents are removed, or rebound with `--rebind-agents`
+  - `granted_by` passes to the initiator
+  - the person's status becomes `taken-over`
+  Then it prints a vault plan: personal items are copied, org items change ownership and are
+  not copied. The executor sits behind an interface and is dry-run by default. The D14 guard
+  is enforced, and taken-over people no longer count as owners.
+- Cancel: only the target, with any of their own active owner keys, until completion.
+
+State lives in `~/.local/state/cvc/takeover/`: `takeovers.json` plus an append-only,
+hash-chained `history.jsonl` (`cvc takeover verify-history`).
