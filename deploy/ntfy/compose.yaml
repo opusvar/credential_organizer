@@ -1,0 +1,25 @@
+# nerdctl/docker compose for a self-hosted ntfy (option D). NOT applied - template only.
+#   sudo nerdctl compose -f deploy/ntfy/compose.yaml up -d
+# Binds to loopback only; expose through the proxy/tunnel described in README.md.
+services:
+  ntfy:
+    image: binwiederhier/ntfy:v2.11.0
+    command: ["serve"]
+    restart: unless-stopped
+    read_only: true
+    user: "1000:1000"
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    ports:
+      - "127.0.0.1:2586:2586"
+    volumes:
+      - ./server.yml:/etc/ntfy/server.yml:ro
+      - ntfy-lib:/var/lib/ntfy
+      - ntfy-cache:/var/cache/ntfy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --tries=1 http://localhost:2586/v1/health -O - | grep -q true"]
+      interval: 60s
+      timeout: 5s
+volumes:
+  ntfy-lib:
+  ntfy-cache:

@@ -28,6 +28,8 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from cvc.notify.hooks import emit as notify
+
 from .model import PERSON_RANK, ApprovalRequest, iso, now_utc, parse_ts
 from .publisher import SUMMARY_TOPIC, NullPublisher, Publisher, discovery_config, request_topic
 
@@ -122,6 +124,7 @@ class ApprovalService:
             self._save()
             self._publish_one(req)
             self._publish_summary()
+        notify("approval_submitted", req)
         return req
 
     def _transition(self, req: ApprovalRequest, status: str, by: str | None) -> None:

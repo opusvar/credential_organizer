@@ -1,0 +1,40 @@
+# ntfy server config for cvc push notifications (option D). NOT applied - template only.
+# Docs: https://docs.ntfy.sh/config/   Replace ntfy.example.com with your public hostname.
+base-url: "https://ntfy.example.com"
+listen-http: ":2586"              # plain HTTP inside the host; TLS terminates at the proxy
+behind-proxy: true                # trust X-Forwarded-For for rate limiting (proxy must set it)
+
+# Auth: nothing is readable or writable unless an ACL grants it.
+auth-file: "/var/lib/ntfy/user.db"
+auth-default-access: "deny-all"
+# Users/ACLs are created with the CLI (see README.md), e.g.:
+#   ntfy user add --role=user cvc-publisher          # write-only publisher (token-based)
+#   ntfy access cvc-publisher 'cvc-*' write-only
+#   ntfy user add --role=user alex                   # one reader per approver phone
+#   ntfy access alex 'cvc-alex-k3j9' read-only
+#   ntfy token add cvc-publisher                     # -> CVC_NTFY_TOKEN_1 (env/secret only)
+
+# iOS instant delivery: ntfy.sh relays only a "poll request" (topic hash) to APNs;
+# the message text is fetched from this server by the app.
+upstream-base-url: "https://ntfy.sh"
+
+cache-file: "/var/cache/ntfy/cache.db"
+cache-duration: "12h"
+
+# Attachments disabled: no attachment-cache-dir -> uploads are rejected.
+enable-signup: false
+enable-login: true
+enable-reservations: false
+web-root: disable                 # no web app on the public host; phones use the app
+
+# Rate limits (per visitor IP).
+visitor-request-limit-burst: 30
+visitor-request-limit-replenish: "10s"
+visitor-message-daily-limit: 500
+visitor-subscription-limit: 10
+visitor-email-limit-burst: 0
+visitor-email-limit-replenish: "24h"
+message-size-limit: "4k"
+
+log-level: info
+log-format: json
