@@ -288,9 +288,101 @@ Timeline from initiation:
 State lives in `~/.local/state/cvc/takeover/`: `takeovers.json` plus an append-only,
 hash-chained `history.jsonl` (`cvc takeover verify-history`).
 
+**D15 addendum: misuse protections and initiator UX** (approved by Nathan 2026-11-01):
+- **Alerts.** The target is alerted on every channel through `MultiNotifier`
+  (`CVC_TAKEOVER_WEBHOOKS`: email relay, push, Home Assistant).
+  - Key path: days 0/7/14/85.
+  - Recovery path: those days, then every 30 days until completion, plus day 170.
+  - On start, every other active owner is notified too.
+- **Veto.** The target, or any other active owner, can cancel with their own YubiKey. The
+  initiator cannot. `vetoed_by` is recorded, and the history event is `cancelled` (target) or
+  `vetoed` (another owner).
+- **No counter-takeovers.**
+  - Someone who is the target of an active takeover cannot start one.
+  - A person can be the target of at most one active takeover; the first one started wins.
+- **Voiding.** If the initiator is removed, taken over or demoted below owner, the takeover is
+  voided automatically on the next `tick`, `view`, `cancel`, `reconcile` or `complete`. The
+  Vaultwarden requests are rejected, and a different owner must restart.
+- **Suspended keys.** A suspended target key is accepted at step 5, because suspension is a
+  lockout, not a recovery block. Lost or revoked keys are still refused. The record notes
+  whether the target's primary key (one holding a device cert) or a backup key was used:
+  `factor` is key, backup-key or recovery-password.
+- **Reconcile.** The cvc record is the source of truth. `cvc takeover reconcile <id>`
+  re-initiates Vaultwarden requests that are missing or were reset, and adopts a re-created
+  grant that matches. The original `initiated_at` and deadline are kept. If Vaultwarden's own
+  timer restarted, completion is still gated on the cvc deadline, and the Vaultwarden takeover
+  call may also wait for Vaultwarden's own timer.
+- **Backup.** `~/.local/state/cvc/takeover/` (`takeovers.json`, `history.jsonl`,
+  `recovery.json`) **must be included in the identity backup**. That is
+  `opi_base_config/scripts/backup-identity.sh`, in another repo; add the path there.
+- **Wizard.** Before confirming, the wizard prints:
+  - the target's name, factor and path
+  - the view and completion days, with real dates
+  - who is notified
+  - the veto rule
+  - what completion does
+  The initiator must type the target's display name (`people.<id>.name`, or the id if there is
+  no name). The FAQ ships as `cvc/takeover/faq.md`; it is printed at wizard start, by
+  `cvc takeover faq`, and at `GET /v1/takeover/faq`.
+- **Initiator status.** `GET /v1/takeover/status?initiator=<id>` and
+  `cvc takeover status --initiator <id>` return an `icon` (`hourglass`, or `check` when
+  eligible) and the text "You are taking over <Target Name>'s account. <N> days left" (or
+  "Ready to complete"), plus the FAQ link. Like the banner, the API is unauthenticated and must
+  sit behind the tier gate.
+
+**D15 addendum 2: veto warning, key role, estate recovery kit** (2026-11-01):
+- **Veto warning.** Vaultwarden only accepts a grant reject from the grantor's (target's)
+  account. A veto by another owner therefore still tries the reject, best effort, but it cannot
+  close View access. It prints a warning and sends it to the target, the initiator and every
+  owner: View access persists until the target rejects the grants (`cvc takeover cancel` with
+  their key, or in Vaultwarden). `cvc takeover veto <id>` is an alias of `cancel`.
+- **Primary vs backup.** An explicit hardware-key `role: primary|backup` (from the access
+  registry, when present) decides `factor` (`key` or `backup-key`). Without it, the rule above
+  applies: a key holding one of the target's device certs is the primary. Where there is no
+  cert context, the location decides: `on-person` is primary; `home-safe` or `offsite` is a
+  backup.
+- **Estate recovery kit.** `cvc takeover estate-kit generate --owner <id>` needs that owner's
+  YubiKey. It prints a 150-bit code (30 Crockford base32 symbols) once, to be printed on paper
+  and kept in a safety deposit box. Only a scrypt hash is stored (`estate_kit.json`, 0600).
+  - It is a step-5 alternative (`start --estate-kit`; path and factor `estate-kit`). The
+    initiator still passes steps 1-4.
+  - It starts the 180-day path, with the recovery-path alert schedule, against any owner
+    target.
+  - It notifies every owner on every channel (`CVC_TAKEOVER_WEBHOOKS`; the older
+    `CVC_TAKEOVER_WEBHOOK` is merged in).
+  - It is single use. When the start succeeds, the hash is destroyed and the kit is marked
+    used, and a new kit must be generated and printed. A failed attempt does not use it up.
+  - It is never auto-replaced, so whoever used it does not get a fresh code.
+  - `estate_kit.json` belongs in the identity backup too.
+  - **Printable sheet.** `generate` writes a one-page PDF with mode 0600 (`--out`; the default
+    is the current dir, and the state dir is refused). With `--terminal` it shows a text QR
+    instead. The sheet carries a QR code of `cvc-estate:v1:<code>`, the code in 6 groups of 5,
+    and plain-language instructions for whoever opens the box, plus the generated date and the
+    kit id. The kit id is a prefix of the scrypt hash, not the code.
+  - Everything is made offline: `segno`, from the optional extra `cvc[estate]`, plus a
+    built-in minimal PDF writer. If `segno` is missing, the command stops with an install hint
+    before any kit is created. After writing the file it prints a reminder to print it and
+    then `shred -u` it.
+  - `start --estate-kit` accepts the typed code or the scanned URI.
+
 ## D16 — Access classification matrix  **[DECIDED 2026-11-01]**
 Two axes (data public/internal/private/secret × action read/relay/write/act/delegate), tier ceilings (scoped/low/medium/high/assistant), effective = min(agent, sponsor) ∩ role grants, secret only via broker single-use approved fetch; guest/family are sponsors, not tiers. See [ACCESS-CLASSIFICATION.md](ACCESS-CLASSIFICATION.md).
 Sponsored guest and family agents are not separate tiers: they use the agent tier ladder plus a `sponsor` (human) attribute (approved by Nathan).
 
 ## D17 — Voluntary delegation  **[DECIDED 2026-11-01]**
 `cvc delegate start` wizard: strong identity, itemised preview (items above the recipient ceiling are revoked, never escalated), 48h revoke window, then execution via the takeover-completion machinery with the D14 owner-key guard. See [DELEGATION.md](DELEGATION.md).
+
+**ADDENDUM [2026-11-01] — implementation (`src/cvc/delegate/`):** `cvc delegate
+start|revoke|decline|status|complete|faq|verify-history` (also `cvc-delegate`). Ceilings use a
+person-tier rank (guest/media-only 0, low 1, medium 2, high 3, admin 4, owner 5). Requirements
+per item: vault item by data class (public/internal low, private medium, secret owner); org
+membership medium (owner/admin role in the org: admin); an owner's hardware key owner;
+device low (its cert is always revoked and re-issued); a grant the delegator gave = the
+grantee's tier. Agents always transfer, capped at min(agent tier, recipient agent ceiling:
+low/medium/high), and expire with a guest recipient. Selecting "roles" drops the delegator to
+`low`; it is never raised on the recipient. Above-ceiling hardware keys are set `revoked`,
+grants get `expires` = execution date, and vault/org items get a revoke step in the plan. The D14
+guard is dry-run at section selection and enforced again at execution. A failure there sets
+status `refused`. `complete` needs no extra factor (it was authorised at start and had the
+48 h window), but it recomputes the diff. State is in `~/.local/state/cvc/delegate/`, with the
+same hash-chained history as takeover.

@@ -1,7 +1,9 @@
 """`cvc takeover ...` CLI (D15). Secrets come from prompts or env, never from argv.
 
 Env: CVC_VW_URL, CVC_VW_TOKEN (Vaultwarden bearer), CVC_AUTHENTIK_ISSUER,
-CVC_AUTHENTIK_CLIENT_ID, CVC_TAKEOVER_WEBHOOK (Home Assistant / push webhook URL).
+CVC_AUTHENTIK_CLIENT_ID, CVC_TAKEOVER_WEBHOOKS (comma-separated alert webhooks: email relay,
+push, Home Assistant; every alert goes to all of them). The older single-name
+CVC_TAKEOVER_WEBHOOK is read too (also comma-separated); both lists are merged.
 """
 from __future__ import annotations
 
@@ -14,6 +16,9 @@ from pathlib import Path
 import httpx
 
 from cvc.takeover import flow
+from cvc.takeover.api import faq_text
+from cvc.takeover.estate import EstateKitStore
+from cvc.takeover.estate_sheet import generate_and_emit
 from cvc.takeover.model import DEFAULT_STATE_DIR, TakeoverError, TakeoverStore, utcnow
 from cvc.takeover.recovery import RecoveryPasswordStore
 from cvc.takeover.verifiers import (
@@ -55,16 +60,23 @@ def _env(name: str) -> str:
     return v
 
 
+def notifier_from_env() -> flow.MultiNotifier | None:
+    raw = ",".join(os.environ.get(n, "") for n in ("CVC_TAKEOVER_WEBHOOKS", "CVC_TAKEOVER_WEBHOOK"))
+    hooks = list(dict.fromkeys(h.strip() for h in raw.split(",") if h.strip()))
+    return flow.MultiNotifier([WebhookNotifier(h) for h in hooks]) if hooks else None
+
+
 def _deps(a: argparse.Namespace) -> flow.Deps:
-    hook = os.environ.get("CVC_TAKEOVER_WEBHOOK")
     vw = (HttpEmergencyAccessClient(_env("CVC_VW_URL"), _env("CVC_VW_TOKEN"))
-          if a.cmd in ("start", "cancel", "view", "complete") else None)
+          if a.cmd in ("start", "cancel", "veto", "view", "complete", "tick", "reconcile")
+          else None)
     return flow.Deps(Path(a.registry), TakeoverStore(a.state_dir), vw, YkmanReader(), utcnow,
-                     WebhookNotifier(hook) if hook else None)
+                     notifier_from_env())
 
 
 def _start(a: argparse.Namespace, d: flow.Deps) -> None:
     w = flow.StartWizard(d)
+    print(faq_text())
     print("[1/6] device certificate")
     did = w.step1_cert(a.initiator, Path(a.cert).read_bytes(),
                        [Path(c).read_bytes() for c in a.chain], Path(a.root_ca).read_bytes())
@@ -79,19 +91,44 @@ def _start(a: argparse.Namespace, d: flow.Deps) -> None:
     target = a.target or input("[4/6] target owner id: ").strip()
     w.step4_target(target)
     print(f"[4/6] target: {target}")
-    if a.recovery_password:
+    if a.estate_kit:
+        print("[5/6] estate recovery kit code (180-day path; single use; all owners notified)")
+        w.step5_estate_kit(EstateKitStore(a.state_dir))
+    elif a.recovery_password:
         print(f"[5/6] {target}'s sealed recovery password (180-day path)")
         w.step5_recovery_password(RecoveryPasswordStore(a.state_dir))
     else:
         input(f"[5/6] remove your key; insert {target}'s YubiKey (primary or backup), Enter ")
         print(f"      ok: {w.step5_target_key()}")
-    rec = w.step6_start()
+    print(w.summary())
+    rec = w.step6_start(input("[6/6] confirm target's name: "))
     print(f"[6/6] started takeover {rec.id} (path {rec.path}): viewer access from day 15, "
           f"completion from day {rec.wait_days}")
 
 
+def _estate_kit(a: argparse.Namespace, d: flow.Deps) -> None:
+    kit = EstateKitStore(a.state_dir)
+    if a.action == "status":
+        print(json.dumps(kit.status() or {"status": "none"}, indent=2))
+        return
+    if not a.owner:
+        raise TakeoverError("estate-kit generate needs --owner")
+    input(f"insert {a.owner}'s YubiKey and press Enter ")
+    verify_owner_key(d.reader.read(), flow.load_registry(d.registry_path), a.owner)
+    rotating = kit.active()
+    generate_and_emit(kit, a.owner, utcnow().isoformat(), a.out or ".", a.terminal)
+    if rotating:
+        print("The previous kit is now void; destroy the old paper.")
+    flow.notify_owners(d, "estate-kit-generated",
+                       f"{a.owner} generated a new estate recovery kit"
+                       + (" (previous kit voided)" if rotating else ""))
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["delegate"]:            # `cvc delegate ...` (D17)
+        from cvc.delegate.__main__ import main as delegate_main
+        return delegate_main(argv[1:])
     if argv[:1] == ["takeover"]:
         argv = argv[1:]
     p = argparse.ArgumentParser(prog="cvc takeover", description="owner takeover (D15)")
@@ -107,8 +144,22 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--target")
     s.add_argument("--recovery-password", action="store_true",
                    help="no target YubiKey: use target's sealed recovery password (180 days)")
-    for name in ("cancel", "view", "status"):
+    s.add_argument("--estate-kit", action="store_true",
+                   help="no target YubiKey: use the printed estate recovery kit (180 days)")
+    sub.add_parser("veto", help="alias of cancel, for a non-target owner").add_argument("id")
+    e = sub.add_parser("estate-kit", help="printed estate recovery kit (D15 addendum)")
+    e.add_argument("action", choices=("generate", "status"))
+    e.add_argument("--owner", help="owner generating the kit (their YubiKey is required)")
+    e.add_argument("--out", help="PDF sheet path or directory (default: current dir; never the "
+                   "state dir)")
+    e.add_argument("--terminal", action="store_true",
+                   help="show the QR + instructions in the terminal instead of writing a file")
+    for name in ("cancel", "view", "reconcile"):
         sub.add_parser(name).add_argument("id")
+    st = sub.add_parser("status", help="one record (id) or initiator status indicator")
+    st.add_argument("id", nargs="?")
+    st.add_argument("--initiator")
+    sub.add_parser("faq", help="show the takeover FAQ")
     c = sub.add_parser("complete")
     c.add_argument("id")
     c.add_argument("--rebind-agents", action="store_true",
@@ -124,12 +175,28 @@ def main(argv: list[str] | None = None) -> int:
         d = _deps(a)
         if a.cmd == "start":
             _start(a, d)
-        elif a.cmd == "cancel":
-            input("insert the target owner's YubiKey and press Enter ")
-            print(f"cancelled {flow.cancel(d, a.id).id}")
+        elif a.cmd == "estate-kit":
+            _estate_kit(a, d)
+        elif a.cmd in ("cancel", "veto"):
+            input("insert your own YubiKey (target or another owner) and press Enter ")
+            rec = flow.cancel(d, a.id)
+            print(f"cancelled {rec.id} (by {rec.vetoed_by})")
+        elif a.cmd == "reconcile":
+            for line in flow.reconcile(d, a.id) or ["nothing to reconcile"]:
+                print(line)
+        elif a.cmd == "faq":
+            print(faq_text())
         elif a.cmd == "view":
             print(f"viewer access: {flow.view(d, a.id)} item(s) visible (read-only)")
+        elif a.cmd == "status" and a.initiator:
+            items = flow.status_items(d.store, a.initiator, utcnow())
+            for it in items:
+                print(f"[{it['icon']}] {it['text']}  ({it['id']}; FAQ: cvc takeover faq)")
+            if not items:
+                print("no active takeover")
         elif a.cmd == "status":
+            if not a.id:
+                raise TakeoverError("give a takeover id or --initiator <id>")
             rec = d.store.get(a.id)
             print(json.dumps({**rec.to_dict(), "phase": rec.phase(utcnow()),
                               "day": rec.day(utcnow())}, indent=2))

@@ -5,8 +5,10 @@ Timeline, counted from initiation:
   day 15-90  ``viewer``       initiator may use read-only Vaultwarden View access (reversible)
   day 90+    ``completable``  ``cvc takeover complete`` may run
 For path ``recovery-password`` (no target YubiKey; target's sealed recovery password instead)
-``completable`` starts at day 180 instead of 90.
-Terminal states: ``cancelled`` (by the target, with their own YubiKey) and ``completed``.
+and path ``estate-kit`` (the household's printed estate recovery kit) ``completable`` starts at
+day 180 instead of 90.
+Terminal states: ``cancelled`` (by the target, or vetoed by another owner: ``vetoed_by``),
+``voided`` and ``completed``.
 
 The store keeps the current records in ``takeovers.json`` and an append-only, hash-chained
 ``history.jsonl`` (same chaining scheme as the broker audit log). No secret is ever stored.
@@ -21,23 +23,26 @@ import os
 import secrets
 from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, field, fields
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 VIEW_WAIT_DAYS = 15
 TAKEOVER_WAIT_DAYS = 90             # path "key": target's (primary or backup) YubiKey presented
 RECOVERY_TAKEOVER_WAIT_DAYS = 180   # path "recovery-password": no target key, sealed password
 NOTIFY_DAYS = (0, 7, 14, 85)
-RECOVERY_NOTIFY_DAYS = (0, 7, 14, 85, 170)
-PATHS = ("key", "recovery-password")
+# Recovery path: same early alerts, then every 30 days until completion, plus day 170.
+RECOVERY_NOTIFY_DAYS = tuple(sorted({0, 7, 14, 85, 170, *range(30, 180, 30)}))
+PATHS = ("key", "recovery-password", "estate-kit")
+LONG_PATHS = frozenset({"recovery-password", "estate-kit"})
 
 
 def takeover_wait_days(path: str) -> int:
-    return RECOVERY_TAKEOVER_WAIT_DAYS if path == "recovery-password" else TAKEOVER_WAIT_DAYS
+    return RECOVERY_TAKEOVER_WAIT_DAYS if path in LONG_PATHS else TAKEOVER_WAIT_DAYS
 
 
 def notify_days(path: str) -> tuple[int, ...]:
-    return RECOVERY_NOTIFY_DAYS if path == "recovery-password" else NOTIFY_DAYS
+    return RECOVERY_NOTIFY_DAYS if path in LONG_PATHS else NOTIFY_DAYS
+
 GENESIS = "0" * 64
 DEFAULT_STATE_DIR = "~/.local/state/cvc/takeover"
 
@@ -64,12 +69,17 @@ class TakeoverRecord:
     initiated_at: str                    # ISO-8601 UTC
     initiator_cert_fingerprint: str
     initiator_key: str
-    target_key: str | None               # None on the recovery-password path
+    target_key: str | None               # None on the recovery-password / estate-kit paths
     elevation_method: str                # "passkey" | "vaultwarden-password" (method only)
     vw_view_grant: str
     vw_takeover_grant: str
     path: str = "key"                    # PATHS
-    status: str = "pending"              # pending | cancelled | completed
+    factor: str = "key"                  # key | backup-key | recovery-password | estate-kit
+    target_name: str = ""
+    status: str = "pending"              # pending | cancelled | completed | voided
+    vetoed_by: str | None = None         # who cancelled (target or another owner)
+    voided_reason: str | None = None
+    reconciled: list[str] = field(default_factory=list)   # ISO times VW was re-initiated
     notified: list[int] = field(default_factory=list)
     cancelled_at: str | None = None
     completed_at: str | None = None
@@ -85,6 +95,14 @@ class TakeoverRecord:
     @property
     def wait_days(self) -> int:
         return takeover_wait_days(self.path)
+
+    @property
+    def deadline(self) -> datetime:
+        """Earliest completion, from the ORIGINAL initiation (never restarts)."""
+        return self.started + timedelta(days=self.wait_days)
+
+    def days_left(self, now: datetime) -> int:
+        return max(0, self.wait_days - self.day(now))
 
     def phase(self, now: datetime) -> str:
         if self.status != "pending":
@@ -106,11 +124,16 @@ class TakeoverRecord:
 
 
 class TakeoverStore:
-    """JSON record file + hash-chained append-only history, under one directory."""
+    """JSON record file + hash-chained append-only history, under one directory.
+    Subclasses (e.g. the delegation store) override the class attributes below."""
+    record_cls: type = TakeoverRecord
+    key = "takeovers"           # top-level key in the records file, also its basename
+    ref = "takeover"            # history field naming the record id
+    error: type[Exception] = TakeoverError
 
     def __init__(self, state_dir: str | os.PathLike):
         self.dir = Path(state_dir).expanduser()
-        self.records_path = self.dir / "takeovers.json"
+        self.records_path = self.dir / f"{self.key}.json"
         self.history_path = self.dir / "history.jsonl"
 
     @contextlib.contextmanager
@@ -123,11 +146,11 @@ class TakeoverStore:
             finally:
                 fcntl.flock(fh, fcntl.LOCK_UN)
 
-    def _read(self) -> dict[str, TakeoverRecord]:
+    def _read(self) -> dict:
         if not self.records_path.exists():
             return {}
         raw = json.loads(self.records_path.read_text(encoding="utf-8"))
-        return {k: TakeoverRecord.from_dict(v) for k, v in raw.get("takeovers", {}).items()}
+        return {k: self.record_cls.from_dict(v) for k, v in raw.get(self.key, {}).items()}
 
     def all(self) -> dict[str, TakeoverRecord]:
         return self._read()
@@ -135,13 +158,12 @@ class TakeoverStore:
     def get(self, tid: str) -> TakeoverRecord:
         rec = self._read().get(tid)
         if rec is None:
-            raise TakeoverError(f"unknown takeover {tid!r}")
+            raise self.error(f"unknown {self.ref} {tid!r}")
         return rec
 
-    def open_for(self, person: str) -> list[TakeoverRecord]:
-        """Pending takeovers where ``person`` is initiator or target."""
-        return [r for r in self._read().values()
-                if r.status == "pending" and person in (r.initiator, r.target)]
+    def pending_against(self, person: str) -> list[TakeoverRecord]:
+        """Pending takeovers whose target is ``person``."""
+        return [r for r in self._read().values() if r.status == "pending" and r.target == person]
 
     def _last_hash(self) -> str:
         last = GENESIS
@@ -151,18 +173,26 @@ class TakeoverStore:
                     last = json.loads(line).get("hash", last)
         return last
 
-    def save(self, rec: TakeoverRecord, event: str, actor: str, now: datetime,
+    def open_for(self, person: str) -> list:
+        """Pending records where ``person`` is one of the parties."""
+        return [r for r in self._read().values()
+                if r.status == "pending" and person in self._parties(r)]
+
+    def _parties(self, r) -> tuple[str, ...]:
+        return (r.initiator, r.target)
+
+    def save(self, rec, event: str, actor: str, now: datetime,
              detail: dict | None = None) -> str:
         """Write the record and append one chained history line. Returns the chain hash."""
         with self._lock():
             recs = self._read()
             recs[rec.id] = rec
             tmp = self.records_path.with_suffix(".tmp")
-            tmp.write_text(json.dumps({"takeovers": {k: v.to_dict() for k, v in recs.items()}},
+            tmp.write_text(json.dumps({self.key: {k: v.to_dict() for k, v in recs.items()}},
                                       indent=2, sort_keys=True), encoding="utf-8")
             os.chmod(tmp, 0o600)
             os.replace(tmp, self.records_path)
-            body = {"ts": now.isoformat(), "takeover": rec.id, "event": event, "actor": actor,
+            body = {"ts": now.isoformat(), self.ref: rec.id, "event": event, "actor": actor,
                     "detail": detail or {}, "prev": self._last_hash()}
             body["hash"] = _chain(body)
             with self.history_path.open("a", encoding="utf-8") as fh:
@@ -176,7 +206,7 @@ class TakeoverStore:
             return []
         rows = [json.loads(x) for x in self.history_path.read_text(encoding="utf-8").splitlines()
                 if x.strip()]
-        return [r for r in rows if tid is None or r.get("takeover") == tid]
+        return [r for r in rows if tid is None or r.get(self.ref) == tid]
 
     def verify_history(self) -> bool:
         prev = GENESIS
