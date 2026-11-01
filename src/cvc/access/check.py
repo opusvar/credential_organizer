@@ -169,6 +169,17 @@ def _check_devices(registry: Registry, today: dt.date) -> list[Finding]:
     if not (registry.hardware_keys or registry.devices):
         return out
     active = [k for k in registry.hardware_keys.values() if k.usable]
+    owner_keys = [k for k in active
+                  if (p := registry.people.get(k.owner)) is not None and p.tier == "owner"
+                  and p.status == "active"]
+    if not owner_keys:
+        out.append(Finding("error", "hardware_keys",
+                           "no active hardware key belongs to an owner-tier person; the owner "
+                           "YubiKey is the root of recovery (D11/D14)"))
+    elif len(owner_keys) == 1:
+        out.append(Finding("warning", "hardware_keys",
+                           f"only one active owner hardware key ({owner_keys[0].id}); "
+                           "enroll a second (D11)"))
     recovery = [k for k in active if "recovery" in k.uses]
     if len(recovery) < 2:
         out.append(Finding("warning", "hardware_keys",

@@ -32,7 +32,8 @@ _SECRET_KEYS = frozenset({"password", "passwd", "secret", "token", "api_key", "p
 DEVICE_KINDS = ("phone", "laptop", "desktop", "tablet")
 CERT_STORAGE = ("p12", "yubikey-piv")
 CERT_STATUS = ("pending", "active", "revoked", "expired")
-HWKEY_STATUS = ("active", "lost", "revoked", "retired")
+PERSON_STATUS = ("active", "taken-over")   # taken-over: D15 owner takeover
+HWKEY_STATUS = ("active", "lost", "revoked", "retired", "suspended")
 HWKEY_LOCATIONS = ("on-person", "home-safe", "offsite")
 HWKEY_USES = ("fido2-vaultwarden", "piv-device-cert", "recovery")
 PERSON_TIERS = ("guest-short", "guest-long", "media-only", "low", "medium", "high", "admin",
@@ -136,6 +137,7 @@ class Person:
     ha: str = "none"                 # HA_ACCESS (guest tiers only)
     expires: dt.date | None = None
     granted_by: str | None = None    # person id
+    status: str = "active"           # PERSON_STATUS
 
 
 @dataclass(frozen=True)
@@ -474,7 +476,8 @@ def _parse_humans(data: dict, roles: dict, seen: dict, errs: list[str]):
             tailnet=_opt_choice(raw.get("tailnet"), TAILNETS, f"{p}.tailnet", errs),
             ha=_choice(raw.get("ha", "none"), HA_ACCESS, f"{p}.ha", errs),
             expires=_date(raw.get("expires"), f"{p}.expires", errs),
-            granted_by=raw.get("granted_by"))
+            granted_by=raw.get("granted_by"),
+            status=_choice(raw.get("status", "active"), PERSON_STATUS, f"{p}.status", errs))
     for pid, person in people.items():
         if person.granted_by is not None and person.granted_by not in people:
             errs.append(f"people.{pid}.granted_by: unknown person {person.granted_by!r}")
@@ -535,7 +538,8 @@ def _parse_humans(data: dict, roles: dict, seen: dict, errs: list[str]):
                         errs.append(f"{cp}.hardware_key: required when storage is yubikey-piv")
                     elif hk not in hwkeys:
                         errs.append(f"{cp}.hardware_key: unknown hardware key {hk!r}")
-                    elif status in ("pending", "active") and not hwkeys[hk].usable:
+                    elif (status in ("pending", "active") and not hwkeys[hk].usable
+                          and hwkeys[hk].status != "suspended"):
                         errs.append(f"{cp}: {status} cert but hardware key {hk!r} is "
                                     f"{hwkeys[hk].status} (revoke the cert)")
                 elif hk is not None:

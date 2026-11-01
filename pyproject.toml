@@ -23,6 +23,8 @@ cvc-backup = "cvc.backup.__main__:main"
 cvc-broker = "cvc.broker.app:main"
 cvc-access = "cvc.access.cli:main"
 cvc-tiergate = "cvc.tiergate.app:main"
+cvc = "cvc.takeover.__main__:main"            # `cvc takeover ...` (D15)
+cvc-takeover = "cvc.takeover.__main__:main"
 
 [build-system]
 requires = ["setuptools>=68"]
