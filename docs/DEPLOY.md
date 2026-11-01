@@ -27,9 +27,9 @@ python -m cvc.deploygen tiergate --registry access/registry.yaml -o /tmp/tiergat
 ```
 
 Route host = `<resource-id>.<base-domain>` unless overridden. Always generate both files with
-the same flags: tier-gate matches on the host name, so the keys must be identical. Note that
-`cvc-access build tiergate` uses the registry `host:` values. That output is only correct with
-`--registry-hosts`. Committed examples from `access/registry.example.yaml` are in
+the same flags: tier-gate matches on the host name, so the keys must be identical. `cvc-access build tiergate`
+uses the same canonical resolver (`cvc.access.catalog.tiergate_hosts`) with the same defaults,
+so its host keys equal `cvc-deploygen tiergate` and the route hosts (a test checks this). Committed examples from `access/registry.example.yaml` are in
 `deploy/traefik/routes.example.yaml` and `deploy/tiergate/configmap.generated.yaml` (a test
 keeps them in sync with the generator).
 

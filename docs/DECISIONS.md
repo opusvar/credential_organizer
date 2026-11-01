@@ -204,6 +204,8 @@ validates it and generates artifacts. `deploy/broker-acl.yaml` becomes generated
 - The grantor must be at least 2 tiers above the tier being granted.
 - Separate tailnets (owner, family, long-guests, short-guests, agents, machines) are network
   walls only; authorization lives in certs and tokens, not in tailnet membership.
+  *(Note 2026-11-01: long-guests and short-guests were merged into one `guests` tailnet. The
+  tailnets are now owner, family, guests, agents, machines; see `cvc.tailnet.policy.TAILNETS`.)*
 - The tier rides in the cert URI SAN `urn:cvc:tier:<tier>`, enforced by Traefik and a tier-gate
   forwardAuth (opusvar/opi_base_config#3).
 

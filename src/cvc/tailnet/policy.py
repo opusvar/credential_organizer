@@ -1,7 +1,7 @@
 """Build the owner tailnet's HuJSON ACL policy.
 
 Owner devices (people listed as owners, resolved via the access registry) get full
-access. Everything shared out to other tailnets (family, long-guests, short-guests,
+access. Everything shared out to other tailnets (family, guests,
 agents, machines) arrives as `autogroup:shared` and may reach only the Traefik proxy
 (443) and the cvc broker (8710) on the services node.
 """
@@ -14,7 +14,8 @@ from cvc.access.model import Registry
 SERVICE_HOST = "100.106.97.34"
 PROXY_PORT = 443
 BROKER_PORT = 8710
-SHARED_TAILNETS = ("family", "long-guests", "short-guests", "agents", "machines")
+SHARED_TAILNETS = ("family", "guests", "agents", "machines")
+TAILNETS = ("owner", *SHARED_TAILNETS)
 FREE_PLAN_MAX_GROUPS = 3
 
 
