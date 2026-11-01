@@ -34,6 +34,12 @@ CERT_STATUS = ("pending", "active", "revoked", "expired")
 HWKEY_STATUS = ("active", "lost", "revoked", "retired")
 HWKEY_LOCATIONS = ("on-person", "home-safe", "offsite")
 HWKEY_USES = ("fido2-vaultwarden", "piv-device-cert", "recovery")
+PERSON_TIERS = ("guest-short", "guest-long", "media-only", "low", "medium", "high", "admin",
+                "owner")
+GUEST_TIERS = frozenset({"guest-short", "guest-long"})
+AGENT_TIERS = ("scoped", "low", "medium", "high", "assistant")
+TAILNETS = ("owner", "family", "long-guests", "short-guests", "agents", "machines")
+HA_ACCESS = ("none", "view", "limited-control")
 _HEX = re.compile(r"^[0-9a-f]+$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -106,6 +112,9 @@ class Principal:
 class Agent(Principal):
     token_sha256: str | None = None
     owner: str | None = None
+    tier: str | None = None          # AGENT_TIERS
+    tailnet: str | None = None       # TAILNETS
+    granted_by: str | None = None    # person id
 
 
 @dataclass(frozen=True)
@@ -118,6 +127,11 @@ class Machine(Principal):
 class Person:
     id: str
     email: str | None = None
+    tier: str | None = None          # PERSON_TIERS
+    tailnet: str | None = None       # TAILNETS
+    ha: str = "none"                 # HA_ACCESS (guest tiers only)
+    expires: dt.date | None = None
+    granted_by: str | None = None    # person id
 
 
 @dataclass(frozen=True)
@@ -340,8 +354,11 @@ def parse_registry(data: Any) -> Registry:
                     th = str(th).strip().lower()
                     if not _HEX64.match(th):
                         errs.append(f"{p}.token_sha256: must be 64 hex characters")
-                agents[pid] = Agent(pid, role_ids, expires, token_sha256=th,
-                                    owner=raw.get("owner"))
+                agents[pid] = Agent(
+                    pid, role_ids, expires, token_sha256=th, owner=raw.get("owner"),
+                    tier=_opt_choice(raw.get("tier"), AGENT_TIERS, f"{p}.tier", errs),
+                    tailnet=_opt_choice(raw.get("tailnet"), TAILNETS, f"{p}.tailnet", errs),
+                    granted_by=raw.get("granted_by"))
             else:
                 auth = None
                 a = raw.get("auth")
@@ -367,6 +384,10 @@ def _choice(v: Any, allowed: tuple[str, ...], path: str, errs: list[str]) -> str
     return str(v)
 
 
+def _opt_choice(v: Any, allowed: tuple[str, ...], path: str, errs: list[str]) -> str | None:
+    return None if v is None else _choice(v, allowed, path, errs)
+
+
 def _hex(v: Any, path: str, errs: list[str], exact64: bool = False) -> str | None:
     if v is None:
         return None
@@ -383,7 +404,17 @@ def _parse_humans(data: dict, roles: dict, seen: dict, errs: list[str]):
         if not isinstance(raw, dict):
             errs.append(f"people.{pid}: must be a mapping")
             continue
-        people[pid] = Person(pid, raw.get("email"))
+        p = f"people.{pid}"
+        people[pid] = Person(
+            pid, raw.get("email"),
+            tier=_opt_choice(raw.get("tier"), PERSON_TIERS, f"{p}.tier", errs),
+            tailnet=_opt_choice(raw.get("tailnet"), TAILNETS, f"{p}.tailnet", errs),
+            ha=_choice(raw.get("ha", "none"), HA_ACCESS, f"{p}.ha", errs),
+            expires=_date(raw.get("expires"), f"{p}.expires", errs),
+            granted_by=raw.get("granted_by"))
+    for pid, person in people.items():
+        if person.granted_by is not None and person.granted_by not in people:
+            errs.append(f"people.{pid}.granted_by: unknown person {person.granted_by!r}")
 
     def owner(v: Any, path: str) -> str:
         if v not in people:

@@ -115,6 +115,8 @@ def build_graph(registry: Registry, today: dt.date | None = None) -> str:
                 cls("soon", nid)
             else:
                 cls("principal", nid)
+            if getattr(p, "tier", None):
+                label += f"<br/>tier: {mermaid_label(p.tier)}"
             if not p.roles:
                 label += "<br/>(no roles)"
             lines.append(f'        {nid}["{label}"]')
@@ -128,7 +130,11 @@ def build_graph(registry: Registry, today: dt.date | None = None) -> str:
         for uid in sorted(registry.people):
             nid = ids.get("u", uid)
             cls("person", nid)
-            lines.append(f'        {nid}["{mermaid_label(uid)}"]')
+            u = registry.people[uid]
+            label = mermaid_label(uid)
+            if u.tier:
+                label += f"<br/>tier: {mermaid_label(u.tier)}"
+            lines.append(f'        {nid}["{label}"]')
         lines.append("    end")
     if registry.hardware_keys:
         lines.append('    subgraph hwkeys["Hardware keys"]')
@@ -224,13 +230,23 @@ def build_graph(registry: Registry, today: dt.date | None = None) -> str:
            "Revoked certs and lost/revoked/retired hardware keys are grey. Cert serials and "
            "fingerprints are never shown."), "",
            "## Principals", "",
-           "| id | type | roles | expires | status |", "|---|---|---|---|---|"]
+           "| id | type | tier | roles | expires | status |", "|---|---|---|---|---|---|"]
     for sect, group in (("agent", registry.agents), ("machine", registry.machines),
                         ("device", registry.devices)):
         for pid in sorted(group):
             p = group[pid]
-            out.append(f"| {_cell(pid)} | {sect} | {_cell(', '.join(sorted(p.roles)) or '-')} | "
+            tier = _cell(getattr(p, "tier", None) or "-")
+            out.append(f"| {_cell(pid)} | {sect} | {tier} | "
+                       f"{_cell(', '.join(sorted(p.roles)) or '-')} | "
                        f"{p.expires.isoformat() if p.expires else '-'} | {status(p)} |")
+    if registry.people:
+        out += ["", "## People", "", "| id | tier | tailnet | ha | expires | granted by |",
+                "|---|---|---|---|---|---|"]
+        for uid in sorted(registry.people):
+            u = registry.people[uid]
+            out.append(f"| {_cell(uid)} | {_cell(u.tier or '-')} | {_cell(u.tailnet or '-')} | "
+                       f"{_cell(u.ha)} | {u.expires.isoformat() if u.expires else '-'} | "
+                       f"{_cell(u.granted_by or '-')} |")
     if registry.devices:
         out += ["", "## Devices", "", ("| id | owner | kind | cert storage | cert status | "
                  "cert not after | history entries |"), "|---|---|---|---|---|---|---|"]

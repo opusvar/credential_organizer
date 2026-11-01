@@ -76,7 +76,7 @@ machines:        # sensors/devices: one MQTT user each
 # Manage with: cvc-access hwkey enroll|revoke, cvc-access device add|set-cert|transfer|revoke
 # (these edits rewrite the file: key order is kept, comments are not).
 people:
-  nathan: {email: nathan@local}
+  nathan: {email: nathan@local, tier: owner, tailnet: owner}
 
 hardware_keys:   # YubiKeys: Vaultwarden FIDO2 2FA, PIV device certs, vault recovery (D11)
   yk-primary:
