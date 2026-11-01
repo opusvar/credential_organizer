@@ -7,6 +7,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 from cvc.audit.findings import assert_no_secrets
+from cvc.notify.hooks import emit as notify
 
 SUMMARY_TOPIC = "cvc/audits/summary"
 TOPIC_PREFIX = "cvc/audits/"
@@ -32,6 +33,7 @@ def build_messages(findings: dict[str, dict], summary: dict,
         msgs.append((TOPIC_PREFIX + fid, json.dumps(f, sort_keys=True)))
     assert_no_secrets(summary)
     msgs.append((SUMMARY_TOPIC, json.dumps(summary, sort_keys=True)))
+    notify("audit_published", findings, summary)
     return msgs
 
 
