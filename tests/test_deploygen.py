@@ -194,3 +194,23 @@ def test_takeover_api_identity_and_owner_gate(tmp_path):
                                                  "X-Cvc-Tier": "admin"}).status_code == 403
     ok = c.get("/v1/takeover/status", headers={"X-Cvc-Person": "n", "X-Cvc-Tier": "owner"})
     assert ok.status_code == 200 and ok.json() == {"takeovers": []}
+
+
+# --- tier-gate builders agree ------------------------------------------------------------
+
+@pytest.mark.parametrize("kw", [
+    {},
+    {"base_domain": "example.test"},
+    {"registry_hosts": True},
+    {"host_overrides": {"ha": "home.example.test"}},
+])
+def test_access_and_deploygen_tiergate_hosts_identical(reg, kw):
+    from cvc.access.catalog import build_tiergate
+    opts = T.Options(**kw)
+    access_hosts = yaml.safe_load(build_tiergate(reg, **kw))["hosts"]
+    cm = next(d for d in yaml.safe_load_all(T.build_tiergate_configmap(reg, opts)) if d)
+    deploygen_hosts = yaml.safe_load(cm["data"]["config.yaml"])["hosts"]
+    assert access_hosts == deploygen_hosts
+    route_hosts = {r["match"].split("`")[1] for d in T.route_objects(reg, opts)
+                   for r in d["spec"]["routes"]}
+    assert set(access_hosts) == route_hosts == set(T.resource_hosts(reg, opts).values())

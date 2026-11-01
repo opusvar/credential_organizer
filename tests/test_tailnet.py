@@ -61,3 +61,10 @@ def test_cli_errors():
     assert main(["policy", "--registry", REG, "--owner", "ghost"]) == 1
     assert main(["policy", "--registry", REG, "--group", "bad"]) == 1
     assert main(["policy", "--registry", "/nonexistent.yaml"]) == 1
+
+
+def test_tailnet_names_are_the_five_current_tailnets():
+    from cvc.tailnet import SHARED_TAILNETS, TAILNETS
+    assert TAILNETS == ("owner", "family", "guests", "agents", "machines")
+    assert SHARED_TAILNETS == TAILNETS[1:]
+    assert not any("short-guests" in t or "long-guests" in t for t in TAILNETS)

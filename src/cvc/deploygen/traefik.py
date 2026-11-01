@@ -18,11 +18,12 @@ from dataclasses import dataclass, field
 
 import yaml
 
+from cvc.access import catalog
 from cvc.access.builders import GENERATED_HEADER
+from cvc.access.catalog import DEFAULT_BASE_DOMAIN
 from cvc.access.check import check_resources
-from cvc.access.model import PERSON_TIERS, Registry, RegistryError
+from cvc.access.model import Registry, RegistryError
 
-DEFAULT_BASE_DOMAIN = "orangepi6.humpback-krait.ts.net"
 DEFAULT_NAMESPACE = "cvc"
 DEFAULT_ENTRYPOINT = "websecure"
 AUTHENTIK_OUTPOST = ("http://ak-outpost-authentik-embedded-outpost.auth.svc.cluster.local:9000"
@@ -70,23 +71,9 @@ def _checked(registry: Registry) -> None:
 
 
 def resource_hosts(registry: Registry, opts: Options) -> dict[str, str]:
-    """resource id -> route hostname (override > registry host if requested > id.base)."""
-    unknown = sorted(set(opts.host_overrides) - set(registry.resources))
-    if unknown:
-        raise RegistryError([f"host override for unknown resource: {r}" for r in unknown])
-    base = opts.base_domain.strip().strip(".").lower()
-    out = {}
-    for rid in sorted(registry.resources):
-        if rid in opts.host_overrides:
-            out[rid] = opts.host_overrides[rid].strip().lower()
-        elif opts.registry_hosts:
-            out[rid] = registry.resources[rid].host
-        else:
-            out[rid] = f"{rid}.{base}"
-    dupes = sorted({h for h in out.values() if list(out.values()).count(h) > 1})
-    if dupes:
-        raise RegistryError([f"duplicate route host: {h}" for h in dupes])
-    return out
+    """resource id -> route hostname; delegates to the canonical cvc.access.catalog resolver."""
+    return catalog.resource_hosts(registry, opts.base_domain, opts.host_overrides,
+                                  opts.registry_hosts)
 
 
 def chain_for(passkey_required: bool) -> list[str]:
@@ -145,9 +132,8 @@ def route_objects(registry: Registry, opts: Options) -> list[dict]:
 
 
 def tiergate_hosts(registry: Registry, opts: Options) -> dict[str, str]:
-    hosts = resource_hosts(registry, opts)
-    return {hosts[r]: registry.resources[r].min_tier
-            for r in sorted(hosts, key=lambda r: hosts[r])}
+    return catalog.tiergate_hosts(registry, opts.base_domain, opts.host_overrides,
+                                  opts.registry_hosts)
 
 
 class _Dumper(yaml.SafeDumper):
@@ -181,8 +167,8 @@ def build_tiergate_configmap(registry: Registry, opts: Options | None = None) ->
     """ConfigMap for cvc-tiergate whose host keys match the generated routes."""
     opts = opts or Options()
     _checked(registry)
-    cfg = ("# Tier order: " + " < ".join(PERSON_TIERS) + "\n# Unlisted hosts are denied.\n"
-           + yaml.safe_dump({"hosts": tiergate_hosts(registry, opts)}, sort_keys=False))
+    cfg = catalog.tiergate_config(registry, opts.base_domain, opts.host_overrides,
+                                  opts.registry_hosts)
     cm = {"apiVersion": "v1", "kind": "ConfigMap",
           "metadata": {"name": "cvc-tiergate-config", "namespace": opts.namespace},
           "data": {"config.yaml": cfg}}

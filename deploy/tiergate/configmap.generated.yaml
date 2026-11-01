@@ -9,7 +9,8 @@ metadata:
 data:
   config.yaml: |
     # Tier order: guest-short < guest-long < media-only < low < medium < high < admin < owner
-    # Unlisted hosts are denied.
+    # Hosts with min tier high/admin/owner also need Authentik passkey proof: dashboard.orangepi6.humpback-krait.ts.net, portainer.orangepi6.humpback-krait.ts.net.
+    # default_min_tier is unset: hosts not listed are denied.
     hosts:
       books.orangepi6.humpback-krait.ts.net: guest-long
       dashboard.orangepi6.humpback-krait.ts.net: high

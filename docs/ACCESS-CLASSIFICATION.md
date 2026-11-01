@@ -1,11 +1,15 @@
 # Access Classification — agents, credentials, systems
 
-**Status:** Approved by Nathan, 2026-11-01 (decision D16). Policy document; no code yet.
+**Status:** Approved by Nathan, 2026-11-01 (decision D16). Policy document.
 Builds on D12 (access registry: roles for agents and machines) and D13 (human devices).
 
 Every access decision is set by two things: **how sensitive the data is** and **what the
 action does**. An agent's tier sets a ceiling over that grid. Human sponsors cap the ceiling
 further, and explicit role grants can only narrow inside it.
+
+**Implemented in:**
+- `src/cvc/access/classify.py` — the sensitivity x action grid, tier ceilings and sponsor caps.
+- `src/cvc/access/check.py` — `check_classification()` rules, run by `cvc-access check`.
 
 ---
 
