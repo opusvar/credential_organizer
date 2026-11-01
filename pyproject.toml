@@ -25,6 +25,8 @@ cvc-access = "cvc.access.cli:main"
 cvc-tiergate = "cvc.tiergate.app:main"
 cvc = "cvc.takeover.__main__:main"            # `cvc takeover ...` (D15)
 cvc-takeover = "cvc.takeover.__main__:main"
+cvc-deploygen = "cvc.deploygen.__main__:main"
+cvc-takeover-api = "cvc.deploygen.takeover_app:main"
 
 [build-system]
 requires = ["setuptools>=68"]
