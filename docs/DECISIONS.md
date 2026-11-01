@@ -402,7 +402,7 @@ A tier-gated proxy filters HA API calls using registry-generated per-tier/per-gu
 One Household org in Vaultwarden. Collections are labelled with D16 data levels; membership is generated from the registry. Personal vaults stay private (reachable only via takeover D15 / delegation D17). Guests get no VW account (expiring Sends or a Wi-Fi QR page). Agents never get VW accounts.
 
 ## D22 — Tailscale accounts  **[DECIDED 2026-11-01]**
-The owner tailnet is Nathan's. Each other tailnet (family, guests, agents, machines) is owned by a separate admin account whose credentials live in the vault behind YubiKey; each has its own free-plan limits. Family = users; guests = invites with device expiry; agents/machines = tagged devices with auth keys.
+The owner tailnet is the owner's. Each other tailnet (family, guests, agents, machines) is owned by a separate admin account whose credentials live in the vault behind YubiKey; each has its own free-plan limits. Family = users; guests = invites with device expiry; agents/machines = tagged devices with auth keys.
 
 ## D23 — Lost device self-report  **[DECIDED 2026-11-01]**
 A user reports a lost device with their password. Its cert is revoked immediately; passwordless (cert) access is blocked for 7 days while password + passkey still work. Owners/admins are notified; an owner can lift the block early with a YubiKey. Runs the device-lost flow.
@@ -411,7 +411,7 @@ A user reports a lost device with their password. Its cert is revoked immediatel
 A read-only admin system process (not an LLM) runs scheduled checks and publishes findings to `cvc/audits/<id>` (schema `cvc.audit.v1`) and `cvc/audits/summary`, shown to owners only on the dashboard. Fixes are owner actions. See [AUDITS.md](AUDITS.md).
 
 ## D25 — Google / Microsoft integrations  **[DECIDED 2026-11-01]**
-OAuth scopes are registry systems labelled per D16; the broker holds refresh tokens and mints down-scoped short-lived access tokens per agent tier; `cvc integrate google|microsoft` consent wizard. Pending Nathan: personal vs Workspace/M365, and which first (recommend Google). See [INTEGRATIONS.md](INTEGRATIONS.md).
+OAuth scopes are registry systems labelled per D16; the broker holds refresh tokens and mints down-scoped short-lived access tokens per agent tier; `cvc integrate google|microsoft` consent wizard. Pending owner decision: personal vs Workspace/M365, and which first (recommend Google). See [INTEGRATIONS.md](INTEGRATIONS.md).
 
 ## D26 — Agent gateway ("Clear for agents")  **[DECIDED 2026-11-01]**
 Enroll once, fast lane via brokered short-lived scoped tokens, screening still applies, per-task boarding pass, full dual-attribution audit; exposed as MCP server and HTTP credential proxy. See [AGENT-GATEWAY.md](AGENT-GATEWAY.md).
