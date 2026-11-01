@@ -32,6 +32,7 @@ cvc-deploygen = "cvc.deploygen.__main__:main"
 cvc-takeover-api = "cvc.deploygen.takeover_app:main"
 cvc-site = "cvc.site:main"
 cvc-approvals = "cvc.approvals.cli:main"         # D18 owner CLI: list|show|decide
+cvc-audit = "cvc.audit.cli:main"              # D24 read-only audit process
 
 [build-system]
 requires = ["setuptools>=68"]

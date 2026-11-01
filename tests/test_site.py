@@ -70,8 +70,8 @@ def test_render_deploy_all_placeholders_known(tmp_path):
     for f in out.rglob("*"):
         if f.is_file():
             assert "${SITE_" not in f.read_text(errors="ignore"), f
-    dep = [d for d in yaml.safe_load_all((out / "step-ca" / "deployment.yaml").read_text())
-           if d and d["kind"] == "Deployment"][0]
+    dep = next(d for d in yaml.safe_load_all((out / "step-ca" / "deployment.yaml").read_text())
+           if d and d["kind"] == "Deployment")
     ports = dep["spec"]["template"]["spec"]["containers"][0]["ports"]
     assert {p["hostIP"] for p in ports if "hostPort" in p} == {"100.64.0.10"}
 
