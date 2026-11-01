@@ -1,0 +1,110 @@
+# cvc takeover banner/status/FAQ API behind Traefik + cvc-tiergate — NOT applied.
+# App: cvc.deploygen.takeover_app (`cvc-takeover-api`), image cvc-tiergate:local (same package).
+# Import into k3s containerd: `sudo k3s ctr images import cvc.tar` (LL-013).
+#
+# Two hosts because tier-gate decides per host:
+#   takeover.<base-domain>        banner + FAQ, any authenticated tier (min guest-short)
+#   takeover-admin.<base-domain>  status, min tier owner (+ Authentik passkey)
+# Add both to access/registry.yaml `resources:` so `cvc-deploygen tiergate` lists them:
+#   takeover:       {name: Takeover banner, host: takeover.example, kind: dashboard, min_tier: guest-short}
+#   takeover-admin: {name: Takeover status, host: takeover-admin.example, kind: admin, min_tier: owner}
+# The routes below restrict each host to its paths; the generated per-resource routes for
+# these two ids should be dropped (or point their upstream at this Service).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cvc-takeover-state
+  namespace: cvc
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: {storage: 64Mi}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cvc-takeover-api
+  namespace: cvc
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: cvc-takeover-api}
+  template:
+    metadata:
+      labels: {app: cvc-takeover-api}
+    spec:
+      containers:
+        - name: api
+          image: cvc-tiergate:local
+          imagePullPolicy: Never
+          command: ["cvc-takeover-api"]
+          env:
+            - {name: CVC_TAKEOVER_STATE, value: /var/lib/cvc/takeover}
+            - {name: CVC_TAKEOVER_PORT, value: "8730"}
+          ports:
+            - {containerPort: 8730, name: http}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: state, mountPath: /var/lib/cvc/takeover, readOnly: true}
+      volumes:
+        - name: state
+          persistentVolumeClaim: {claimName: cvc-takeover-state}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cvc-takeover-api
+  namespace: cvc
+spec:
+  selector: {app: cvc-takeover-api}
+  ports:
+    - {port: 8730, targetPort: http, name: http}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: cvc-takeover
+  namespace: cvc
+spec:
+  entryPoints: [websecure]
+  routes:
+    - match: Host(`takeover.orangepi6.humpback-krait.ts.net`) && (Path(`/v1/takeover/banner`) || Path(`/v1/takeover/faq`))
+      kind: Rule
+      middlewares:
+        - {name: cvc-strip-identity-headers}
+        - {name: cvc-client-cert}
+        - {name: cvc-tiergate}
+      services:
+        - {name: cvc-takeover-api, port: 8730}
+  tls:
+    secretName: cvc-routes-tls
+    options: {name: cvc-mtls}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: cvc-takeover-admin
+  namespace: cvc
+spec:
+  entryPoints: [websecure]
+  routes:
+    - match: Host(`takeover-admin.orangepi6.humpback-krait.ts.net`) && Path(`/v1/takeover/status`)
+      kind: Rule
+      middlewares:
+        - {name: cvc-strip-identity-headers}
+        - {name: cvc-client-cert}
+        - {name: cvc-authentik}
+        - {name: cvc-tiergate}
+      services:
+        - {name: cvc-takeover-api, port: 8730}
+  tls:
+    secretName: cvc-routes-tls
+    options: {name: cvc-mtls}
