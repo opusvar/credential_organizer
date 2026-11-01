@@ -63,7 +63,7 @@ def _collect(registry: Registry, today: dt.date, system: str | None):
 def build_mosquitto(registry: Registry, today: dt.date | None = None,
                     system: str | None = None) -> str:
     """Build the acl_file. `system` limits output to one mqtt system's grants."""
-    today = today or dt.date.today()
+    today = today or dt.datetime.now().astimezone().date()
     if system is not None and (system not in registry.systems
                                or registry.systems[system].kind != "mqtt"):
         raise RegistryError([f"system {system!r} is not an mqtt system"])
@@ -90,7 +90,7 @@ def _builder(registry: Registry, today: dt.date | None = None) -> str:
 def mqtt_usernames(registry: Registry, today: dt.date | None = None,
                    system: str | None = None) -> list[str]:
     """Sorted usernames needing a `mosquitto_passwd` entry (no passwords handled)."""
-    acl, errs, _ = _collect(registry, today or dt.date.today(), system)
+    acl, errs, _ = _collect(registry, today or dt.datetime.now().astimezone().date(), system)
     if errs:
         raise RegistryError(errs)
     return sorted(acl)

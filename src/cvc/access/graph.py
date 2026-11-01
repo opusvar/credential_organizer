@@ -82,7 +82,7 @@ def _cell(text: str) -> str:
 
 @register_builder("graph")
 def build_graph(registry: Registry, today: dt.date | None = None) -> str:
-    today = today or dt.date.today()
+    today = today or dt.datetime.now().astimezone().date()
     ids = _Ids()
     soon_limit = today + dt.timedelta(days=SOON_DAYS)
 

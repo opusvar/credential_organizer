@@ -10,6 +10,7 @@ dependencies = [
     "uvicorn>=0.30",      # broker server
     "pydantic>=2.7",      # typed models / config
     "PyYAML>=6.0",        # ACL file
+    "cryptography>=42",   # tiergate client-cert parsing
 ]
 
 [project.optional-dependencies]
@@ -21,6 +22,7 @@ cvc-remind = "cvc.reminders.__main__:main"
 cvc-backup = "cvc.backup.__main__:main"
 cvc-broker = "cvc.broker.app:main"
 cvc-access = "cvc.access.cli:main"
+cvc-tiergate = "cvc.tiergate.app:main"
 
 [build-system]
 requires = ["setuptools>=68"]

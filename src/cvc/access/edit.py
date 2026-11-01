@@ -207,7 +207,7 @@ def run_edit(args: argparse.Namespace, today: dt.date | None = None) -> int:
     path = Path(args.registry)
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        msg = args.edit(data, args, today or dt.date.today())
+        msg = args.edit(data, args, today or dt.datetime.now().astimezone().date())
         parse_registry(data)
     except RegistryError as e:
         for err in e.errors:
