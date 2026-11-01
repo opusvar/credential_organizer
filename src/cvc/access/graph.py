@@ -148,6 +148,8 @@ def build_graph(registry: Registry, today: dt.date | None = None) -> str:
             cls("person", nid)
             u = registry.people[uid]
             label = mermaid_label(uid)
+            if u.name and u.name != uid:
+                label = f"{mermaid_label(u.name)}<br/>({mermaid_label(uid)})"
             if u.tier:
                 label += f"<br/>tier: {mermaid_label(u.tier)}"
             lines.append(f'        {nid}["{label}"]')

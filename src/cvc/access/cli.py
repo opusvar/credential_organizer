@@ -42,6 +42,12 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--registry", **reg_kw)
     b.add_argument("--out", help="output file (default: stdout)")
     b.add_argument("--system", help="limit output to one system id (mosquitto only)")
+    b.add_argument("--base-domain", default=catalog.DEFAULT_BASE_DOMAIN,
+                   help="route base domain (tiergate only; default: %(default)s)")
+    b.add_argument("--host", action="append", default=[], metavar="RES=FQDN",
+                   help="override one resource's route host (tiergate only; repeatable)")
+    b.add_argument("--registry-hosts", action="store_true",
+                   help="use each resource's registry `host` verbatim (tiergate only)")
     i = sub.add_parser("import-acl", help="bootstrap a registry from a broker ACL")
     i.add_argument("acl")
     i.add_argument("--out", default=DEFAULT_REGISTRY)
@@ -81,9 +87,26 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: --system is only supported for the mosquitto target, "
               f"not {args.target!r}", file=sys.stderr)
         return 2
+    host_opts = (args.base_domain != catalog.DEFAULT_BASE_DOMAIN or args.host
+                 or args.registry_hosts)
+    if host_opts and args.target != "tiergate":
+        print(f"error: --base-domain/--host/--registry-hosts are only supported for the "
+              f"tiergate target, not {args.target!r}", file=sys.stderr)
+        return 2
+    overrides: dict[str, str] = {}
+    for h in args.host:
+        rid, sep, fqdn = h.partition("=")
+        if not sep or not rid.strip() or not fqdn.strip():
+            print(f"error: --host expects RES=FQDN, got {h!r}", file=sys.stderr)
+            return 2
+        overrides[rid.strip()] = fqdn.strip()
     try:
         if args.target == "mosquitto":
             text = build_mosquitto(reg, None, system=args.system)
+        elif args.target == "tiergate":
+            text = catalog.build_tiergate(reg, None, base_domain=args.base_domain,
+                                          host_overrides=overrides,
+                                          registry_hosts=args.registry_hosts)
         else:
             text = BUILDERS[args.target](reg, None)
     except RegistryError as e:

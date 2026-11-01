@@ -158,6 +158,11 @@ class Person:
     granted_by: str | None = None    # person id
     status: str = "active"           # PERSON_STATUS
     history: tuple[dict, ...] = ()
+    name: str | None = None          # optional display name (takeover/onboard/graph)
+
+    @property
+    def display_name(self) -> str:
+        return self.name or self.id
 
     def active(self, today: dt.date | None = None) -> bool:
         if self.status == "checked-out":
@@ -533,6 +538,15 @@ def _hex(v: Any, path: str, errs: list[str], exact64: bool = False) -> str | Non
     return h
 
 
+def _name(v: Any, path: str, errs: list[str]) -> str | None:
+    if v is None:
+        return None
+    if not isinstance(v, str) or not v.strip():
+        errs.append(f"{path}: must be a non-empty string")
+        return None
+    return v.strip()
+
+
 def _parse_humans(data: dict, roles: dict, seen: dict, errs: list[str]):
     people: dict[str, Person] = {}
     for pid, raw in _mapping(data, "people", errs).items():
@@ -549,7 +563,8 @@ def _parse_humans(data: dict, roles: dict, seen: dict, errs: list[str]):
             expires=_date(raw.get("expires"), f"{p}.expires", errs),
             granted_by=raw.get("granted_by"),
             status=_choice(raw.get("status", "active"), PERSON_STATUS, f"{p}.status", errs),
-            history=tuple(h for h in (raw.get("history") or []) if isinstance(h, dict)))
+            history=tuple(h for h in (raw.get("history") or []) if isinstance(h, dict)),
+            name=_name(raw.get("name"), f"{p}.name", errs))
     for pid, person in people.items():
         if person.granted_by is not None and person.granted_by not in people:
             errs.append(f"people.{pid}.granted_by: unknown person {person.granted_by!r}")
