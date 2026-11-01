@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import difflib
 import re
 import sys
 from pathlib import Path
@@ -155,6 +156,85 @@ def device_transfer(data: dict, a: argparse.Namespace, today: dt.date) -> str:
     return f"transferred {a.id}: {src} -> {dst}; new cert pending"
 
 
+def _revoke_cmd(serial: str | None, reason: str) -> str:
+    return (f"step ca revoke {serial} --reason \"{reason}\"" if serial else
+            "(no cert serial recorded; find it in the step-ca logs, then `step ca revoke`)")
+
+
+def person_remove(data: dict, a: argparse.Namespace, today: dt.date) -> str:
+    """Offboard a person. Prints out-of-band steps; never runs them."""
+    pid = a.id
+    people = data.get("people") or {}
+    if pid not in people:
+        raise EditError(f"unknown person {pid!r}")
+    del people[pid]
+    devs = data.get("devices") or {}
+    keys = data.get("hardware_keys") or {}
+    agents = data.get("agents") or {}
+    gone_devs = {d: v or {} for d, v in devs.items() if (v or {}).get("owner") == pid}
+    gone_keys = {k: v or {} for k, v in keys.items() if (v or {}).get("owner") == pid}
+    gone_agents = {g: v or {} for g, v in agents.items() if (v or {}).get("owner") == pid}
+    for d in gone_devs:
+        del devs[d]
+    for k in gone_keys:
+        del keys[k]
+    for g in gone_agents:
+        del agents[g]
+    flagged = []
+    for section in ("people", "agents"):
+        for oid, raw in (data.get(section) or {}).items():
+            if isinstance(raw, dict) and raw.get("granted_by") == pid:
+                raw["granted_by"] = None
+                flagged.append(f"{section}.{oid}")
+    roles = sorted({r for v in (*gone_devs.values(), *gone_agents.values())
+                    for r in (v.get("roles") or [])})
+
+    out = [(f"removed person {pid}: {len(gone_devs)} device(s), {len(gone_keys)} hardware "
+            f"key(s), {len(gone_agents)} assistant agent(s)")]
+    out += [f"  - device {d}" for d in gone_devs]
+    out += [f"  - hardware key {k} (serial {v.get('serial')})" for k, v in gone_keys.items()]
+    out += [f"  - agent {g}" for g in gone_agents]
+    if flagged:
+        out.append(f"FLAGGED (granted_by {pid}; cleared, NOT removed -- re-sponsor or offboard):")
+        out += [f"  ! {f}" for f in flagged]
+    out.append("Out-of-band checklist (NOT executed):")
+    for d, v in gone_devs.items():
+        cert = v.get("cert") or {}
+        if cert.get("status") in ("pending", "active") or cert.get("serial"):
+            out.append(f"  [ ] revoke cert of {d}: {_revoke_cmd(cert.get('serial'), 'offboard')}")
+    out.append(f"  [ ] remove {pid}'s devices from the Tailscale tailnet")
+    out.append(f"  [ ] remove Authentik user {pid} and their passkeys/WebAuthn authenticators")
+    if roles:
+        out.append(f"  [ ] rotate shared credentials reachable via role(s): {', '.join(roles)}")
+    else:
+        out.append("  [ ] no roles found; confirm no shared credentials need rotation")
+    return "\n".join(out)
+
+
+def device_lost(data: dict, a: argparse.Namespace, today: dt.date) -> str:
+    """Mark a device lost and revoke its cert in the registry. Never contacts step-ca."""
+    dev = _device(data, a.id)
+    if dev.get("status") == "lost":
+        raise EditError(f"device {a.id!r} is already marked lost")
+    cert = dev.get("cert") or {}
+    serial = cert.get("serial")
+    dev["status"] = "lost"
+    dev["lost"] = today
+    _revoke_cert(dev, today, "device lost")
+    _append(dev, {"date": today, "event": "lost"})
+    out = [f"marked {a.id} lost ({today})", "Out-of-band checklist (NOT executed):",
+           f"  [ ] {_revoke_cmd(serial, 'device lost')}"]
+    hk = cert.get("hardware_key") if cert.get("storage") == "yubikey-piv" else None
+    if hk:
+        out += [(f"  [ ] cert lived on YubiKey {hk}: if the key went missing with the device, "
+                 f"run `cvc-access hwkey revoke {hk} --reason lost`"),
+                (f"  [ ] if {hk} is still in hand: `ykman piv certificates delete 9a` and reset "
+                 "the PIV PIN/PUK before re-issuing"),
+                f"  [ ] if {hk} is lost, remove its FIDO2 passkeys from Authentik/Vaultwarden"]
+    out.append(f"  [ ] remove {a.id} from the Tailscale tailnet")
+    return "\n".join(out)
+
+
 def add_parsers(sub: argparse._SubParsersAction, reg_kw: dict) -> None:
     hw = sub.add_parser("hwkey", help="enroll or revoke hardware keys (YubiKeys)")
     hws = hw.add_subparsers(dest="action", required=True)
@@ -199,8 +279,19 @@ def add_parsers(sub: argparse._SubParsersAction, reg_kw: dict) -> None:
     g.add_argument("--to-hardware-key")
     g.add_argument("--to-p12", action="store_true")
     t.set_defaults(edit=device_transfer)
-    for p in (e, r, a, s, v, t):
+    lo = dvs.add_parser("lost", help="mark a device lost; prints step-ca revoke steps")
+    lo.add_argument("id")
+    lo.set_defaults(edit=device_lost)
+
+    pe = sub.add_parser("person", help="offboard people")
+    pes = pe.add_subparsers(dest="action", required=True)
+    pr = pes.add_parser("remove", help="remove a person, their devices, keys and assistants")
+    pr.add_argument("id")
+    pr.set_defaults(edit=person_remove)
+    for p in (e, r, a, s, v, t, lo, pr):
         p.add_argument("--registry", **reg_kw)
+    for p in (lo, pr):
+        p.add_argument("--dry-run", action="store_true", help="show the diff; write nothing")
 
 
 def run_edit(args: argparse.Namespace, today: dt.date | None = None) -> int:
@@ -216,6 +307,15 @@ def run_edit(args: argparse.Namespace, today: dt.date | None = None) -> int:
     except (EditError, OSError, ValueError, yaml.YAMLError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
-    path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    new = yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
+    if getattr(args, "dry_run", False):
+        old = path.read_text(encoding="utf-8")
+        sys.stdout.writelines(difflib.unified_diff(
+            old.splitlines(keepends=True), new.splitlines(keepends=True),
+            str(path), f"{path} (dry run)"))
+        print(msg)
+        print("dry run: registry not written")
+        return 0
+    path.write_text(new, encoding="utf-8")
     print(msg)
     return 0
