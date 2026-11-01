@@ -12,10 +12,15 @@ expensive, so they carry the most coverage.
   unlisted credentials, wrong purposes, and empty allow-lists; the audit chain must detect
   tampering. These are asserted, not assumed (`tests/test_broker.py`).
 - **Pure logic is unit-tested directly** (no network, no vault, no MQTT). External effects
-  (`bw` CLI, MQTT, HIBP, FastAPI I/O) are stubbed/`NotImplementedError` in the scaffold and will
-  be covered with fakes/mocks as each phase is implemented.
+  (`bw` CLI, MQTT, HIBP, FastAPI I/O) are covered with fakes/mocks.
+- **Tests are order-independent** (PR #10): an autouse fixture in `tests/conftest.py` isolates
+  `os.environ`/`HOME` per test, so CLI code that writes `os.environ` no longer leaks between tests.
 
-## What is covered now (scaffold)
+## Current size
+251 tests collected on origin/main at 2026-10-31
+(`PYTHONPATH=src python -m pytest -q --co | tail -1`).
+
+## Areas covered (non-exhaustive)
 | Area | Test | Kind |
 |---|---|---|
 | Import normalize + dedup (Phase 1) | `test_normalize.py` | unit |
@@ -24,14 +29,12 @@ expensive, so they carry the most coverage.
 | Config (env → Config at load time) | `test_config.py` | unit |
 | Broker ACL default-deny + audit integrity (Phase 4) | `test_broker.py` | unit / security |
 
-## Coverage to add as phases land
-- **Phase 1:** vault write path via a fake `bw` (subprocess boundary mocked); shred-after-import.
-- **Phase 2:** HIBP k-anonymity (mock the range endpoint; assert only the 5-char prefix is sent);
-  MQTT publish shape (fake client; assert no secret/username in payloads).
-- **Phase 3:** encrypted-export invariant (never writes a plaintext export); retention pruning.
-- **Phase 4:** FastAPI endpoint tests via `TestClient` (401/403/501 paths, audit-written-before-
-  return); once retrieval exists, a "secret never appears in logs/audit" test. **Opus security
-  review gates this phase.**
+Other suites present: `test_vault_client`, `test_keychain_importer`, `test_hibp`, `test_mqtt_publish`,
+`test_mqtt_integration`, `test_remind_main`, `test_backup_*` (export, main, fixes), `test_tokens`,
+`test_access_*` (registry, mosquitto, graph, cli), `test_step_ca_manifests`.
+
+## Gaps still open
+- Restore test of a password-protected export (manual, see RUNBOOK-recovery); not yet done.
 
 ## Running
 ```bash
