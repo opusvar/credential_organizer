@@ -218,7 +218,7 @@ def test_etag_required_and_checked(env):
 def test_whoami_tailnet_only(env, monkeypatch):
     client, _, _ = env
     h = _id("nat", "owner")
-    assert client.get("/v1/whoami", headers={**h, "X-Real-Ip": "192.168.1.50"}).status_code == 403
+    assert client.get("/v1/whoami", headers={**h, "X-Real-Ip": "10.0.0.50"}).status_code == 403
     no_ip = {k: v for k, v in h.items() if k != "X-Real-Ip"}
     assert client.get("/v1/whoami", headers=no_ip).status_code == 403
     xff = {**no_ip, "X-Forwarded-For": "100.64.0.9, 10.42.0.1"}
