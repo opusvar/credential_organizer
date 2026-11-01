@@ -225,3 +225,6 @@ step-ca, `deploy/step-ca`). All the certs sit under one human identity (`people.
   and all active keys in one location.
 - **D8 still stands for agent→broker auth** (bearer token over Tailscale). D13 covers human
   devices only.
+
+## D16 — Access classification matrix  **[DECIDED 2026-11-01]**
+Two axes (data public/internal/private/secret × action read/relay/write/act/delegate), tier ceilings (scoped/low/medium/high/assistant), effective = min(agent, sponsor) ∩ role grants, secret only via broker single-use approved fetch; guest/family are sponsors, not tiers. See [ACCESS-CLASSIFICATION.md](ACCESS-CLASSIFICATION.md).
