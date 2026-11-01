@@ -9,11 +9,15 @@ flowchart LR
         p_playwright_billing["playwright-billing"]
     end
     subgraph machines["Machines / sensors"]
+        p_cvc_remind["cvc-remind"]
         p_garage_temp["garage-temp"]
+        p_home_assistant["home-assistant"]
     end
     subgraph roles["Roles"]
         r_backup_runner["backup-runner"]
         r_billing_agent["billing-agent"]
+        r_cvc_remind_publisher["cvc-remind-publisher"]
+        r_home_assistant["home-assistant"]
         r_sensor_publish["sensor-publish"]
         r_worker_caller["worker-caller"]
     end
@@ -25,9 +29,13 @@ flowchart LR
     p_personal_dashboard --> r_backup_runner
     p_personal_dashboard --> r_worker_caller
     p_playwright_billing --> r_billing_agent
+    p_cvc_remind --> r_cvc_remind_publisher
     p_garage_temp --> r_sensor_publish
+    p_home_assistant --> r_home_assistant
     r_backup_runner -->|"1 credential #40;backup#41;: *"| s_vaultwarden
     r_billing_agent -->|"1 credential: pay-invoice"| s_vaultwarden
+    r_cvc_remind_publisher -->|"write: cvc/reminders/#35;, homeassistant/sensor/cvc_stale_credentials/config"| s_ha_mqtt
+    r_home_assistant -->|"readwrite: #35;"| s_ha_mqtt
     r_sensor_publish -->|"write: sensors/#123;id#125;/#35;"| s_ha_mqtt
     r_worker_caller -.->|"documented only"| s_workers
     classDef enforced fill:#dbeafe,stroke:#1d4ed8,color:#0f172a,stroke-width:2px
@@ -38,8 +46,8 @@ flowchart LR
     classDef expired fill:#e5e7eb,stroke:#9ca3af,color:#6b7280,stroke-dasharray:3 3
     classDef soon fill:#fed7aa,stroke:#c2410c,color:#0f172a,stroke-width:2px
     class s_ha_mqtt,s_vaultwarden enforced
-    class p_personal_dashboard,p_playwright_billing,p_garage_temp principal
-    class r_backup_runner,r_billing_agent,r_sensor_publish,r_worker_caller role
+    class p_personal_dashboard,p_playwright_billing,p_cvc_remind,p_garage_temp,p_home_assistant principal
+    class r_backup_runner,r_billing_agent,r_cvc_remind_publisher,r_home_assistant,r_sensor_publish,r_worker_caller role
     class s_workers unenforced
 ```
 
@@ -51,7 +59,9 @@ Solid blue = enforced; dashed = documented only (not enforced); grey = expired; 
 |---|---|---|---|---|
 | personal-dashboard | agent | backup-runner, worker-caller | 2027-01-31 | active |
 | playwright-billing | agent | billing-agent | - | active |
+| cvc-remind | machine | cvc-remind-publisher | - | active |
 | garage-temp | machine | sensor-publish | - | active |
+| home-assistant | machine | home-assistant | - | active |
 
 ## Systems
 
