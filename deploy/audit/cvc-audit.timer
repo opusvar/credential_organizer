@@ -1,0 +1,12 @@
+[Unit]
+Description=cvc audit admin process — hourly
+Requires=cvc-audit.service
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=120
+Unit=cvc-audit.service
+
+[Install]
+WantedBy=timers.target
