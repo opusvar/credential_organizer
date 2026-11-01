@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 
+from cvc.access.classify import APPROVAL, DENIED, classify_grant, effective, grant_labels
 from cvc.access.model import GUEST_TIERS, PERSON_TIERS, Agent, Registry
 
 SOON_DAYS = 30
@@ -41,7 +42,59 @@ def check_registry(registry: Registry, today: dt.date | None = None) -> list[Fin
                                    "(documented only)"))
     out += _check_devices(registry, today)
     out += check_tiers(registry)
+    out += check_classification(registry, today)
     out += check_resources(registry)
+    return out
+
+
+# ── D16 classification ──────────────────────────────────────────────────────
+_ACTION_RANK = {"read": 0, "relay": 1, "write": 2, "act": 3}
+
+
+def _exceeds(granted: str, exposed: str) -> bool:
+    if "delegate" in (granted, exposed):
+        return granted != exposed
+    return _ACTION_RANK[granted] > _ACTION_RANK[exposed]
+
+
+def check_classification(registry: Registry, today: dt.date | None = None) -> list[Finding]:
+    """Data/action labels vs tier ceilings (docs/ACCESS-CLASSIFICATION.md)."""
+    today = today or dt.datetime.now().astimezone().date()
+    out: list[Finding] = []
+    for rid in sorted(registry.roles):
+        for g in registry.roles[rid].grants:
+            s = registry.system_of(g)
+            if g.action and s.action and _exceeds(g.action, s.action):
+                out.append(Finding("error", g.path, f"action {g.action} exceeds what system "
+                                                    f"{s.id} exposes ({s.action})"))
+            if g.via and grant_labels(registry, g)[0] != "secret":
+                out.append(Finding("warning", g.path, f"via: {g.via} is only meaningful for "
+                                                      "secret data"))
+    for aid in sorted(registry.agents):
+        a = registry.agents[aid]
+        path = f"agents.{aid}"
+        sp = registry.people.get(a.sponsor_id or "")
+        if sp is not None and sp.tier in GUEST_TIERS and a.active(today) is False \
+                and a.roles:
+            out.append(Finding("warning", path, f"sponsor {sp.id} (guest) access ended; agent "
+                                                "is revoked with them"))
+        if sp is not None and not sp.active(today) and sp.tier not in GUEST_TIERS:
+            out.append(Finding("warning", path, f"sponsor {sp.id} is not active"))
+        eff = effective(registry, a)
+        if eff.row is not None and eff.row != a.tier and a.tier is not None:
+            out.append(Finding("info", path, f"effective ceiling {eff.row} ({eff.reason})"))
+        for rid in a.roles:
+            for g in registry.roles[rid].grants:
+                res = classify_grant(registry, a, g)
+                if res is None:
+                    continue
+                verdict, why = res
+                if verdict == DENIED:
+                    out.append(Finding("error", path, f"role {rid} ({g.path}) exceeds tier "
+                                                      f"ceiling: {why}"))
+                elif verdict == APPROVAL:
+                    out.append(Finding("warning", path, f"role {rid} ({g.path}) needs "
+                                                        f"per-action approval: {why}"))
     return out
 
 
@@ -69,15 +122,14 @@ _RANK = {t: i for i, t in enumerate(PERSON_TIERS)}
 _AGENT_RANK = {"scoped": _RANK["low"], "low": _RANK["low"], "medium": _RANK["medium"],
                "high": _RANK["high"]}
 _OWNER_ONLY = frozenset({"high", "admin", "owner"})
-_EXPECTED_TAILNET = {"guest-short": "short-guests", "guest-long": "long-guests",
-                     "owner": "owner"}
+_EXPECTED_TAILNET = {"guest-short": "guests", "guest-long": "guests", "owner": "owner"}
 SCOPED_MAX_SYSTEMS = 2
 
 
 def agent_rank(registry: Registry, agent: Agent) -> int | None:
     """Effective tier rank on the person scale (assistant = min(person, medium))."""
     if agent.tier == "assistant":
-        person = registry.people.get(agent.owner or "")
+        person = registry.people.get(agent.sponsor_id or "")
         if person is None or person.tier is None:
             return None
         return min(_RANK[person.tier], _RANK["medium"])
@@ -134,12 +186,13 @@ def check_tiers(registry: Registry) -> list[Finding]:
             out.append(Finding("error", path, f"agents must be on tailnet agents, "
                                               f"not {a.tailnet}"))
         if a.tier == "assistant":
-            person = registry.people.get(a.owner or "")
+            person = registry.people.get(a.sponsor_id or "")
             if person is None:
                 out.append(Finding("error", path, "assistant agents must bind to one person "
-                                                  f"via owner (got {a.owner!r})"))
+                                                  f"via sponsor/owner (got {a.sponsor_id!r})"))
             elif person.tier is None:
-                out.append(Finding("error", path, f"assistant owner {a.owner!r} has no tier"))
+                out.append(Finding("error", path, f"assistant sponsor {a.sponsor_id!r} has "
+                                                  "no tier"))
         if a.tier == "scoped":
             systems = {g.system for _, g in registry.grants_for(a)}
             if len(systems) > SCOPED_MAX_SYSTEMS:
@@ -180,6 +233,13 @@ def _check_devices(registry: Registry, today: dt.date) -> list[Finding]:
         out.append(Finding("warning", "hardware_keys",
                            f"only one active owner hardware key ({owner_keys[0].id}); "
                            "enroll a second (D11)"))
+    for pid in sorted({k.owner for k in owner_keys}):
+        prim = [k.id for k in owner_keys if k.owner == pid and k.role == "primary"]
+        if len(prim) != 1:
+            out.append(Finding("error", f"people.{pid}",
+                               f"owner must have exactly one active primary hardware key "
+                               f"(role: primary); has {len(prim)}"
+                               + (f" ({', '.join(sorted(prim))})" if prim else "")))
     recovery = [k for k in active if "recovery" in k.uses]
     if len(recovery) < 2:
         out.append(Finding("warning", "hardware_keys",

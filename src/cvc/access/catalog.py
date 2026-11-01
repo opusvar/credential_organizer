@@ -17,7 +17,7 @@ def can_reach(person: Person, resource: Resource, today: dt.date | None = None) 
     today = today or dt.datetime.now().astimezone().date()
     if person.tier is None or resource.min_tier not in _RANK:
         return False
-    if person.expires is not None and today > person.expires:
+    if not person.active(today):     # expired, or a checked-out guest
         return False
     return _RANK[person.tier] >= _RANK[resource.min_tier]
 

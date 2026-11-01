@@ -19,7 +19,10 @@ import yaml
 from cvc.access.model import (
     CERT_STORAGE,
     DEVICE_KINDS,
+    GUEST_DEFAULT_DAYS,
+    GUEST_TIERS,
     HWKEY_LOCATIONS,
+    HWKEY_ROLES,
     PERSON_TIERS,
     RegistryError,
     parse_registry,
@@ -83,14 +86,29 @@ def _revoke_cert(dev: dict, today: dt.date, reason: str) -> bool:
 
 
 # ── owner hardware-key invariant (D14) ──────────────────────────────────────
-def active_owner_keys(data: dict) -> list[str]:
-    """Ids of active hardware keys whose owner is an active (not taken-over) owner-tier person."""
+def active_owner_keys(data: dict, role: str | None = None) -> list[str]:
+    """Ids of active hardware keys whose owner is an active (not taken-over) owner-tier person.
+
+    `role` ("primary" | "backup") narrows to keys with that explicit role.
+    """
     people = data.get("people") or {}
     owners = {pid for pid, p in people.items() if isinstance(p, dict) and p.get("tier") == "owner"
               and p.get("status", "active") == "active"}
     return sorted(k for k, v in (data.get("hardware_keys") or {}).items()
                   if isinstance(v, dict) and v.get("owner") in owners
-                  and v.get("status", "active") == "active")
+                  and v.get("status", "active") == "active"
+                  and (role is None or v.get("role") == role))
+
+
+def owner_primary_keys(data: dict) -> dict[str, list[str]]:
+    """Active owner -> ids of their active primary keys (check wants exactly one each)."""
+    keys = data.get("hardware_keys") or {}
+    out: dict[str, list[str]] = {}
+    for kid in active_owner_keys(data):
+        out.setdefault(keys[kid]["owner"], [])
+    for kid in active_owner_keys(data, role="primary"):
+        out[keys[kid]["owner"]].append(kid)
+    return out
 
 
 def _guard_owner_keys(before: list[str], data: dict, what: str) -> None:
@@ -130,9 +148,15 @@ def hwkey_enroll(data: dict, a: argparse.Namespace, today: dt.date) -> str:
     model = a.model or info.get("model")
     if serial is None or not model:
         raise EditError("--serial and --model are required (or pipe `ykman info` with --from-ykman)")
+    role = a.role
+    if role is None:   # first active key of an owner becomes primary
+        role = "backup" if owner_primary_keys(data).get(a.owner) else "primary"
+    elif role == "primary" and owner_primary_keys(data).get(a.owner):
+        raise EditError(f"{a.owner} already has a primary key "
+                        f"({', '.join(owner_primary_keys(data)[a.owner])}); enroll as backup")
     keys[a.id] = {"owner": a.owner, "model": model, "serial": serial, "uses": _csv(a.uses),
-                  "location": a.location, "enrolled": today, "status": "active"}
-    return f"enrolled hardware key {a.id} (serial {serial})"
+                  "location": a.location, "enrolled": today, "status": "active", "role": role}
+    return f"enrolled hardware key {a.id} (serial {serial}, {role})"
 
 
 def hwkey_revoke(data: dict, a: argparse.Namespace, today: dt.date) -> str:
@@ -221,6 +245,7 @@ def hwkey_replace(data: dict, a: argparse.Namespace, today: dt.date) -> str:
             raise EditError(f"hardware key {a.new!r} does not exist; enroll it first or pass "
                             "--serial and --model to enroll it here")
         keys[a.new] = {"owner": old.get("owner"), "model": a.model, "serial": _serial(a.serial),
+                       "role": old.get("role"),
                        "uses": list(old.get("uses") or []),
                        "location": a.location or old.get("location"), "enrolled": today,
                        "status": "active", "history": [{"date": today, "event": "enrolled"}]}
@@ -231,6 +256,8 @@ def hwkey_replace(data: dict, a: argparse.Namespace, today: dt.date) -> str:
                         "be active before the old key is retired")
     before = active_owner_keys(data)
     old["status"] = "retired"
+    if old.get("role") == "primary":    # the replacement takes over the primary slot
+        new["role"] = "primary"
     _guard_owner_keys(before, data, f"hwkey replace {a.old}")
     _append(old, {"date": today, "event": "retired", "replaced_by": a.new})
     _append(new, {"date": today, "event": "replaces", "key": a.old})
@@ -324,7 +351,8 @@ def person_remove(data: dict, a: argparse.Namespace, today: dt.date) -> str:
     agents = data.get("agents") or {}
     gone_devs = {d: v or {} for d, v in devs.items() if (v or {}).get("owner") == pid}
     gone_keys = {k: v or {} for k, v in keys.items() if (v or {}).get("owner") == pid}
-    gone_agents = {g: v or {} for g, v in agents.items() if (v or {}).get("owner") == pid}
+    gone_agents = {g: v or {} for g, v in agents.items()
+                   if (v or {}).get("owner") == pid or (v or {}).get("sponsor") == pid}
     for d in gone_devs:
         del devs[d]
     for k in gone_keys:
@@ -389,6 +417,51 @@ def device_lost(data: dict, a: argparse.Namespace, today: dt.date) -> str:
     return "\n".join(out)
 
 
+def guest_add(data: dict, a: argparse.Namespace, today: dt.date) -> str:
+    people = _section(data, "people")
+    if a.id in people:
+        raise EditError(f"person {a.id!r} already exists")
+    expires = (dt.date.fromisoformat(a.expires) if a.expires
+               else today + dt.timedelta(days=GUEST_DEFAULT_DAYS))
+    entry: dict[str, Any] = {"tier": a.tier, "tailnet": "guests", "expires": expires,
+                             "granted_by": a.granted_by,
+                             "history": [{"date": today, "event": "added"}]}
+    if a.email:
+        entry["email"] = a.email
+    people[a.id] = entry
+    return f"added guest {a.id} ({a.tier}) until {expires}"
+
+
+def guest_checkout(data: dict, a: argparse.Namespace, today: dt.date) -> str:
+    """End a guest's access today; revoke the agents they sponsor."""
+    person = (data.get("people") or {}).get(a.id)
+    if not isinstance(person, dict):
+        raise EditError(f"unknown person {a.id!r}")
+    if person.get("tier") not in GUEST_TIERS:
+        raise EditError(f"{a.id!r} is {person.get('tier')}, not a guest")
+    if person.get("status") == "checked-out":
+        raise EditError(f"guest {a.id!r} is already checked out")
+    person["expires"] = today
+    person["status"] = "checked-out"
+    _append(person, {"date": today, "event": "checked-out"})
+    ended = today - dt.timedelta(days=1)
+    gone = []
+    for gid, ag in (data.get("agents") or {}).items():
+        if not isinstance(ag, dict) or (ag.get("sponsor") or ag.get("owner")) != a.id:
+            continue
+        exp = ag.get("expires")
+        if exp is None or dt.date.fromisoformat(str(exp)) > ended:
+            ag["expires"] = ended
+        _append(ag, {"date": today, "event": "revoked", "reason": f"sponsor {a.id} checked out"})
+        gone.append(gid)
+    out = [f"checked out guest {a.id} ({today}); revoked {len(gone)} sponsored agent(s)"]
+    out += [f"  - agent {g}" for g in gone]
+    out += _oob([f"remove {a.id}'s devices from the guests tailnet",
+                 f"disable Authentik user {a.id} / guest Wi-Fi credentials",
+                 *[f"rebuild broker ACL (agent {g} now expired)" for g in gone[:1]]])
+    return "\n".join(out)
+
+
 def add_parsers(sub: argparse._SubParsersAction, reg_kw: dict) -> None:
     hw = sub.add_parser("hwkey", help="enroll or revoke hardware keys (YubiKeys)")
     hws = hw.add_subparsers(dest="action", required=True)
@@ -399,6 +472,8 @@ def add_parsers(sub: argparse._SubParsersAction, reg_kw: dict) -> None:
     e.add_argument("--model")
     e.add_argument("--uses", required=True, help="comma-separated, e.g. recovery,fido2-vaultwarden")
     e.add_argument("--location", required=True, choices=HWKEY_LOCATIONS)
+    e.add_argument("--role", choices=HWKEY_ROLES,
+                   help="primary | backup (default: primary if the owner has none)")
     e.add_argument("--from-ykman", action="store_true",
                    help="read `ykman info` output on stdin for serial/model")
     e.set_defaults(edit=hwkey_enroll)
@@ -466,9 +541,21 @@ def add_parsers(sub: argparse._SubParsersAction, reg_kw: dict) -> None:
     st.add_argument("id")
     st.add_argument("--tier", required=True, choices=PERSON_TIERS)
     st.set_defaults(edit=person_set_tier)
-    for p in (e, r, a, s, v, t, lo, pr, su, rs, tr, rp, st):
+    gu = sub.add_parser("guest", help="add guests and check them out (D16)")
+    gus = gu.add_subparsers(dest="action", required=True)
+    ga = gus.add_parser("add", help=f"add a guest (default expiry {GUEST_DEFAULT_DAYS} days)")
+    ga.add_argument("id")
+    ga.add_argument("--tier", choices=sorted(GUEST_TIERS), default="guest-short")
+    ga.add_argument("--expires", help="YYYY-MM-DD (default: today + 5 days)")
+    ga.add_argument("--email")
+    ga.add_argument("--granted-by", default="nathan")
+    ga.set_defaults(edit=guest_add)
+    gc = gus.add_parser("checkout", help="end a guest's access now (and their agents')")
+    gc.add_argument("id")
+    gc.set_defaults(edit=guest_checkout)
+    for p in (e, r, a, s, v, t, lo, pr, su, rs, tr, rp, st, ga, gc):
         p.add_argument("--registry", **reg_kw)
-    for p in (lo, pr, r, su, rs, tr, rp, st):
+    for p in (lo, pr, r, su, rs, tr, rp, st, gc):
         p.add_argument("--dry-run", action="store_true", help="show the diff; write nothing")
 
 
