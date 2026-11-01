@@ -1,0 +1,32 @@
+[Unit]
+Description=cvc audit admin process (D24) — read-only checks, findings to MQTT
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+TimeoutStartSec=120
+# Mode 600. Needs MQTT_USERNAME/MQTT_PASSWORD (MQTT_HOST defaults to site node_ip),
+# CVC_REGISTRY, AUDIT_LOG, BACKUP_DIR. Optional: CVC_AUDIT_DENY_THRESHOLD,
+# CVC_AUDIT_DENY_WINDOW_HOURS, CVC_AUDIT_BACKUP_MAX_AGE_DAYS, ROTATION_MAX_AGE_DAYS.
+# Do NOT give this unit vault credentials beyond a read-only BW_SESSION (rotation check
+# is skipped without one).
+EnvironmentFile=%h/.config/cvc/audit.env
+Environment=HOME=%h
+Environment=BACKUP_DIR=/mnt/data/cvc-backups
+ExecStart=%h/.local/bin/cvc-audit run
+StandardOutput=journal
+StandardError=journal
+
+CPUQuota=20%
+MemoryMax=128M
+NoNewPrivileges=true
+PrivateTmp=true
+RestrictSUIDSGID=true
+# Read-only process: everything is read-only except its own state dir.
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/state/cvc/audit
+
+[Install]
+WantedBy=default.target
