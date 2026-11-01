@@ -1,0 +1,107 @@
+---
+# step-ca — home CA. hostPort 9000 bound to the Tailscale IP only (hostIP).
+# step-ca binds :9000 inside the pod netns; hostIP restricts the HOST side
+# (see opi_base_config/containers/k8s/AI-AGENT-K8S-GUIDE.md §4).
+#
+# Prerequisites (one-time, see README.md):
+#   sudo install -d -m 700 -o 1000 -g 1000 /mnt/data/pki   # then run init.sh
+#   kubectl apply -f deploy/step-ca/namespace.yaml
+#   kubectl -n pki create secret generic step-ca-secrets \
+#     --from-literal=OIDC_CLIENT_ID=<authentik client id> \
+#     --from-literal=OIDC_CLIENT_SECRET=<authentik client secret> \
+#     --from-literal=SCEP_CHALLENGE=<random challenge> \
+#     --from-file=password=<file holding intermediate key password>
+#   kubectl -n pki create configmap step-ca-config \
+#     --from-file=ca.json.tmpl=deploy/step-ca/ca.json.tmpl
+#
+# Secrets are injected at pod start by the render-config initContainer:
+# ca.json.tmpl (ConfigMap, no secrets) -> /home/step/config/ca.json (on the
+# mode-700 PV, file mode 600). step-ca documents no env/file indirection for
+# the OIDC clientSecret, so rendering is the only way to keep it out of git.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: step-ca
+  namespace: pki
+  labels:
+    app: step-ca
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # hostPort is a node-level mutex; Recreate prevents scheduling deadlock
+  selector:
+    matchLabels:
+      app: step-ca
+  template:
+    metadata:
+      labels:
+        app: step-ca
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        runAsNonRoot: true
+      initContainers:
+        - name: render-config
+          image: smallstep/step-ca:0.30.2
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              umask 077
+              mkdir -p /home/step/config
+              awk '{
+                gsub(/__OIDC_CLIENT_ID__/, ENVIRON["OIDC_CLIENT_ID"]);
+                gsub(/__OIDC_CLIENT_SECRET__/, ENVIRON["OIDC_CLIENT_SECRET"]);
+                gsub(/__SCEP_CHALLENGE__/, ENVIRON["SCEP_CHALLENGE"]);
+                print }' /tmpl/ca.json.tmpl > /home/step/config/ca.json
+          envFrom:
+            - secretRef:
+                name: step-ca-secrets
+          volumeMounts:
+            - { name: data, mountPath: /home/step }
+            - { name: tmpl, mountPath: /tmpl, readOnly: true }
+      containers:
+        - name: step-ca
+          image: smallstep/step-ca:0.30.2
+          command: ["step-ca"]
+          args: ["/home/step/config/ca.json", "--password-file", "/run/step/password"]
+          ports:
+            - name: https
+              containerPort: 9000
+              hostPort: 9000
+              hostIP: "100.106.97.34"   # Tailscale only
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9000
+              scheme: HTTPS
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9000
+              scheme: HTTPS
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 20m, memory: 64Mi }
+            limits: { memory: 256Mi }
+          volumeMounts:
+            - { name: data, mountPath: /home/step }
+            - { name: password, mountPath: /run/step, readOnly: true }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: step-ca-data
+        - name: tmpl
+          configMap:
+            name: step-ca-config
+        - name: password
+          secret:
+            secretName: step-ca-secrets
+            defaultMode: 0400
+            items:
+              - { key: password, path: password }
