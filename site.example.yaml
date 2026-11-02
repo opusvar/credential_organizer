@@ -14,3 +14,17 @@ ca_admin_email: admin@example.com # step-ca OIDC admin
 # ca_url: https://<node_ip>:9000
 # vault_url: https://<base_domain>:8443/vault
 # namespaces: {cvc: cvc, pki: pki, auth: auth}
+#
+# MQTT for cvc/approvals + cvc/audits (env MQTT_HOST / MQTT_PORT / MQTT_USERNAME override).
+# Setting mqtt_host opts in to publishing. MQTT_PASSWORD is env-only, never here.
+# mqtt_host: 10.0.0.10
+# mqtt_port: 1883
+# mqtt_username: cvc-broker       # the ONLY user the Mosquitto ACL lets write cvc/#
+#
+# ntfy push (env CVC_NTFY_SERVERS / CVC_NTFY_TOPICS / CVC_APPROVAL_CARD_URL override).
+# Tokens are env-only (CVC_NTFY_TOKEN_<n>, 1-based in server order), never here.
+# ntfy_servers:                   # failover order: self-hosted (D27), then ntfy.sh (option C)
+#   - https://ntfy.cvc.example.ts.net
+#   - https://ntfy.sh
+# ntfy_topics: {alex: cvc-alex-k3j9}   # registry people.<id>.notify.ntfy_topic wins
+# approval_card_url: "{dashboard}/agents/approvals/{id}"

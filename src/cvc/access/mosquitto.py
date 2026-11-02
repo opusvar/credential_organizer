@@ -2,6 +2,10 @@
 
 Mosquitto denies everything not listed once an acl_file is active, so the generator
 warns when no principal has broad read access (Home Assistant would be cut off).
+With `cvc_writer` set (CLI default: site.yaml `mqtt_username`), the cvc/# namespace is
+guarded: only that user may hold write/readwrite on a topic that can match cvc/...;
+everyone else (dashboard, Home Assistant) must be read-only there. See
+docs/mosquitto-cvc-acl.md.
 Passwords are never handled here; `mqtt_usernames` lists who needs a mosquitto_passwd entry.
 """
 from __future__ import annotations
@@ -60,14 +64,38 @@ def _collect(registry: Registry, today: dt.date, system: str | None):
     return acl, errs, broad
 
 
+def _may_match_cvc(topic: str) -> bool:
+    """True if a subscription/publish pattern can match some topic under cvc/."""
+    first = topic.split("/", 1)[0]
+    return first in ("#", "+", "cvc")
+
+
+def cvc_write_violations(acl: dict[str, set[tuple[str, str]]], writer: str) -> list[str]:
+    errs = []
+    for user in sorted(acl):
+        if user == writer:
+            continue
+        for t, a in sorted(acl[user]):
+            if a in ("write", "readwrite") and _may_match_cvc(t):
+                errs.append(f"mqtt user {user!r}: {a} on {t!r} can write cvc/#; only the "
+                            f"broker user {writer!r} may write there (grant read on "
+                            "cvc/approvals/# and cvc/audits/# instead)")
+    return errs
+
+
 def build_mosquitto(registry: Registry, today: dt.date | None = None,
-                    system: str | None = None) -> str:
-    """Build the acl_file. `system` limits output to one mqtt system's grants."""
+                    system: str | None = None, cvc_writer: str | None = None) -> str:
+    """Build the acl_file. `system` limits output to one mqtt system's grants.
+
+    `cvc_writer`: when set, reject any other user that could write under cvc/.
+    """
     today = today or dt.datetime.now().astimezone().date()
     if system is not None and (system not in registry.systems
                                or registry.systems[system].kind != "mqtt"):
         raise RegistryError([f"system {system!r} is not an mqtt system"])
     acl, errs, broad = _collect(registry, today, system)
+    if cvc_writer:
+        errs += cvc_write_violations(acl, cvc_writer)
     if errs:
         raise RegistryError(errs)
     out = GENERATED_HEADER.format(name="mosquitto")

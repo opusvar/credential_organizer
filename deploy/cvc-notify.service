@@ -1,0 +1,28 @@
+[Unit]
+Description=cvc notify tick — escalate pending approvals, flush quiet-hours queue, digest
+Documentation=file:%h/projects/credential_organizer/docs/NOTIFICATIONS.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+TimeoutStartSec=50
+
+# CVC_NTFY_TOKEN_<n> and optional CVC_NTFY_* overrides. Mode 600, created by hand from
+# deploy/notify.env.example. Servers/topics/card URL may instead live in site.yaml.
+EnvironmentFile=%h/.config/cvc/notify.env
+Environment=HOME=%h
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/installs/python/3.12/bin:/usr/local/bin:/usr/bin:/bin
+
+ExecStart=%h/.local/bin/cvc-notify tick
+
+StandardOutput=journal
+StandardError=journal
+CPUQuota=10%
+MemoryMax=96M
+NoNewPrivileges=true
+PrivateTmp=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=default.target

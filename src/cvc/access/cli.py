@@ -43,6 +43,9 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--registry", **reg_kw)
     b.add_argument("--out", help="output file (default: stdout)")
     b.add_argument("--system", help="limit output to one system id (mosquitto only)")
+    b.add_argument("--cvc-writer", default=None,
+                   help="mosquitto only: the sole MQTT user allowed to write cvc/# "
+                        "(default: site mqtt_username; '-' disables the guard)")
     b.add_argument("--base-domain",
                    help="route base domain (tiergate only; default: site base_domain)")
     b.add_argument("--host", action="append", default=[], metavar="RES=FQDN",
@@ -103,7 +106,14 @@ def main(argv: list[str] | None = None) -> int:
         overrides[rid.strip()] = fqdn.strip()
     try:
         if args.target == "mosquitto":
-            text = build_mosquitto(reg, None, system=args.system)
+            writer = args.cvc_writer
+            if writer is None:
+                try:
+                    writer = site_config.load().mqtt_username
+                except Exception:  # noqa: BLE001 - no site config -> guard off
+                    writer = ""
+            text = build_mosquitto(reg, None, system=args.system,
+                                   cvc_writer=None if writer in ("", "-") else writer)
         elif args.target == "tiergate":
             text = catalog.build_tiergate(reg, None, base_domain=(
                                               args.base_domain or site_config.load().base_domain),

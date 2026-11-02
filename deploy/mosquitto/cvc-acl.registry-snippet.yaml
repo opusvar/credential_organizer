@@ -1,0 +1,30 @@
+# Registry snippet (merge into your access registry; NOT applied). Generates the cvc part
+# of the Mosquitto acl_file with:
+#   cvc-access build mosquitto --registry REG.yaml --system ha-mqtt --out acl.generated
+# The generator enforces that ONLY site.yaml `mqtt_username` (or --cvc-writer) may hold
+# write/readwrite on any topic that can match cvc/... (cvc/#, +/..., #). See
+# docs/mosquitto-cvc-acl.md.
+version: 1
+systems:
+  ha-mqtt: {kind: mqtt}
+roles:
+  cvc-mqtt-writer:              # the broker / approvals / audits publisher
+    grants:
+      - {system: ha-mqtt, topics: ["cvc/#"], access: readwrite}
+      - {system: ha-mqtt, topics: ["homeassistant/#"], access: write}   # HA discovery configs
+  cvc-mqtt-reader:              # dashboard, Home Assistant
+    grants:
+      - {system: ha-mqtt, topics: ["cvc/approvals/#", "cvc/audits/#"], access: read}
+  ha-core:                      # HA itself: broad, but NOT write on # (that would include cvc/)
+    grants:
+      - {system: ha-mqtt, topics: ["homeassistant/#"], access: readwrite}
+machines:
+  cvc-broker:
+    roles: [cvc-mqtt-writer]
+    auth: {type: mqtt-user, username: cvc-broker}
+  dashboard:
+    roles: [cvc-mqtt-reader]
+    auth: {type: mqtt-user, username: cvc-dashboard}
+  home-assistant:
+    roles: [cvc-mqtt-reader, ha-core]
+    auth: {type: mqtt-user, username: hass}

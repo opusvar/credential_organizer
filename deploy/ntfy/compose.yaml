@@ -1,6 +1,9 @@
-# nerdctl/docker compose for a self-hosted ntfy (option D). NOT applied - template only.
-#   sudo nerdctl compose -f deploy/ntfy/compose.yaml up -d
-# Binds to loopback only; expose through the proxy/tunnel described in README.md.
+# nerdctl compose for a self-hosted ntfy on the services node (option D, D27).
+# NOT applied - template only. Use nerdctl (rootful standalone containerd), never docker:
+#   cvc-site render-deploy --out ~/cvc-rendered && cd ~/cvc-rendered/ntfy
+#   sudo nerdctl compose -f compose.yaml up -d
+# ntfy binds to loopback only; the ONLY public path is the cloudflared sidecar below,
+# which dials out to Cloudflare (no router port forwards, no inbound listener).
 services:
   ntfy:
     image: binwiederhier/ntfy:v2.11.0
@@ -20,6 +23,23 @@ services:
       test: ["CMD-SHELL", "wget -q --tries=1 http://localhost:2586/v1/health -O - | grep -q true"]
       interval: 60s
       timeout: 5s
+  cloudflared:
+    image: cloudflare/cloudflared:2025.10.0
+    command: ["tunnel", "--no-autoupdate", "--config", "/etc/cloudflared/config.yml", "run"]
+    restart: unless-stopped
+    read_only: true
+    user: "65532:65532"
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    # host network so the tunnel can reach ntfy on 127.0.0.1:2586; it opens no listener
+    # except the metrics endpoint, bound to loopback in config.yml.
+    network_mode: host
+    volumes:
+      - ./cloudflared/config.yml:/etc/cloudflared/config.yml:ro
+      # Tunnel credentials JSON (created by `cloudflared tunnel create`), mode 0600,
+      # kept OUTSIDE the repo and the rendered tree.
+      - ${CVC_CLOUDFLARED_CREDS:-/etc/cvc/cloudflared/ntfy-tunnel.json}:/etc/cloudflared/creds.json:ro
+    depends_on: [ntfy]
 volumes:
   ntfy-lib:
   ntfy-cache:

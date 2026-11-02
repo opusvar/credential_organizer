@@ -1,6 +1,7 @@
 # ntfy server config for cvc push notifications (option D). NOT applied - template only.
-# Docs: https://docs.ntfy.sh/config/   Replace ntfy.example.com with your public hostname.
-base-url: "https://ntfy.example.com"
+# Docs: https://docs.ntfy.sh/config/   Render with `cvc-site render-deploy` (D27):
+# the public host is ntfy.<base_domain>, served only through Cloudflare Tunnel.
+base-url: "https://${SITE_NTFY_HOST}"
 listen-http: ":2586"              # plain HTTP inside the host; TLS terminates at the proxy
 behind-proxy: true                # trust X-Forwarded-For for rate limiting (proxy must set it)
 

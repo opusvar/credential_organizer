@@ -14,6 +14,14 @@ _UNSET = object()
 _notifier: object = _UNSET
 
 
+def _site_has_ntfy() -> bool:
+    try:
+        from cvc import site as _site
+        return bool(_site.load().ntfy_servers)
+    except Exception:                                   # noqa: BLE001
+        return False
+
+
 def set_notifier(n) -> None:
     """Install a notifier (or None to disable). Tests and long-running services use this."""
     global _notifier
@@ -24,7 +32,7 @@ def get_notifier():
     global _notifier
     if _notifier is _UNSET:
         _notifier = None
-        if os.environ.get("CVC_NTFY_SERVERS"):
+        if os.environ.get("CVC_NTFY_SERVERS") or _site_has_ntfy():
             try:
                 from .__main__ import build_notifier
                 _notifier = build_notifier()

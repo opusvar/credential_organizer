@@ -1,0 +1,12 @@
+[Unit]
+Description=cvc notify — tick every minute
+Requires=cvc-notify.service
+
+[Timer]
+OnCalendar=*:*:00
+# A missed minute is irrelevant (the next tick catches up), so no Persistent=.
+AccuracySec=5s
+Unit=cvc-notify.service
+
+[Install]
+WantedBy=timers.target

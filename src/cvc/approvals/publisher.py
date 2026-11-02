@@ -80,22 +80,25 @@ class MqttPublisher:
 def from_env(site=None) -> Publisher:
     """MqttPublisher when opted in, else NullPublisher.
 
-    Opt-in is explicit (MQTT_HOST set, or CVC_APPROVALS_MQTT=1 to use the site's node_ip) so
-    that tests and dev runs never broadcast to a real broker. CVC_APPROVALS_MQTT=0 forces off.
+    Opt-in is explicit so that tests and dev runs never broadcast to a real broker:
+    MQTT_HOST set, or site.yaml `mqtt_host` set, or CVC_APPROVALS_MQTT=1 (falls back to the
+    site's node_ip). CVC_APPROVALS_MQTT=0 forces off. Env MQTT_HOST/MQTT_PORT/MQTT_USERNAME
+    override the site's mqtt_host/mqtt_port/mqtt_username; MQTT_PASSWORD is env-only.
     """
     flag = os.environ.get("CVC_APPROVALS_MQTT", "").strip().lower()
     if flag in ("0", "false", "no"):
         return NullPublisher()
-    host = os.environ.get("MQTT_HOST")
+    if site is None:
+        from cvc import site as site_mod
+        try:
+            site = site_mod.load()
+        except Exception:  # noqa: BLE001 - unreadable site config -> env only
+            site = None
+    host = os.environ.get("MQTT_HOST") or getattr(site, "mqtt_host", "")
     if not host:
-        if flag not in ("1", "true", "yes"):
+        if flag not in ("1", "true", "yes") or site is None:
             return NullPublisher()
-        if site is None:
-            from cvc import site as site_mod
-            try:
-                site = site_mod.load()
-            except Exception:  # noqa: BLE001 - no site config -> no broadcast
-                return NullPublisher()
         host = site.node_ip
-    return MqttPublisher(host, int(os.environ.get("MQTT_PORT", "1883")),
-                         os.environ.get("MQTT_USERNAME") or None)
+    port = int(os.environ.get("MQTT_PORT") or getattr(site, "mqtt_port", 1883) or 1883)
+    user = os.environ.get("MQTT_USERNAME") or getattr(site, "mqtt_username", "") or None
+    return MqttPublisher(host, port, user)
