@@ -160,3 +160,9 @@ def test_ntfy_templates_render(tmp_path):
     assert 'base-url: "https://ntfy.cvc.example.com"' in (tmp_path / "server.yml").read_text()
     compose = (tmp_path / "compose.yaml").read_text()
     assert "127.0.0.1:2586:2586" in compose and "docker compose" not in compose
+
+
+def test_ntfy_host_override_and_default():
+    from cvc.site import Site
+    assert Site(base_domain="x.example.com").template_vars()["SITE_NTFY_HOST"] == "ntfy.x.example.com"
+    assert Site(ntfy_host="push.example.org").template_vars()["SITE_NTFY_HOST"] == "push.example.org"

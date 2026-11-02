@@ -49,6 +49,9 @@ class Site:
     mqtt_username: str = ""                 # the broker's MQTT user (sole writer of cvc/#)
     # ntfy push (env CVC_NTFY_SERVERS / CVC_NTFY_TOPICS / CVC_APPROVAL_CARD_URL win).
     # Tokens are env-only (CVC_NTFY_TOKEN_<n>), never in site.yaml.
+    # Public ntfy hostname behind the Cloudflare Tunnel (D27). Left open on purpose:
+    # "" -> ntfy.<base_domain>. Set this once a Cloudflare-managed domain is chosen.
+    ntfy_host: str = ""
     ntfy_servers: tuple[str, ...] = ()      # failover order
     ntfy_topics: dict[str, str] = field(default_factory=dict)   # person id -> topic
     approval_card_url: str = ""             # "" -> "{dashboard}/agents/approvals/{id}"
@@ -80,7 +83,7 @@ class Site:
             "SITE_NS_CVC": self.namespaces.get("cvc", "cvc"),
             "SITE_NS_PKI": self.namespaces.get("pki", "pki"),
             "SITE_NS_AUTH": self.namespaces.get("auth", "auth"),
-            "SITE_NTFY_HOST": f"ntfy.{self.base_domain}",
+            "SITE_NTFY_HOST": self.ntfy_host or f"ntfy.{self.base_domain}",
             "SITE_MQTT_USER": self.mqtt_username,
         }
 

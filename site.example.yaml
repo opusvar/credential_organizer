@@ -23,6 +23,7 @@ ca_admin_email: admin@example.com # step-ca OIDC admin
 #
 # ntfy push (env CVC_NTFY_SERVERS / CVC_NTFY_TOPICS / CVC_APPROVAL_CARD_URL override).
 # Tokens are env-only (CVC_NTFY_TOKEN_<n>, 1-based in server order), never here.
+# ntfy_host: ntfy.example.com    # public ntfy name (Cloudflare-managed domain, D27); unset -> ntfy.<base_domain>
 # ntfy_servers:                   # failover order: self-hosted (D27), then ntfy.sh (option C)
 #   - https://ntfy.cvc.example.ts.net
 #   - https://ntfy.sh

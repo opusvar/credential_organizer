@@ -1,5 +1,5 @@
 # cloudflared config for the ntfy tunnel (D27). NOT applied - template only.
-# Rendered by `cvc-site render-deploy`; ${SITE_NTFY_HOST} = ntfy.<base_domain>.
+# Rendered by `cvc-site render-deploy`; ${SITE_NTFY_HOST} = site ntfy_host (default ntfy.<base_domain>).
 # base_domain must be a zone on your Cloudflare account for this hostname to resolve.
 #
 # One-time setup (on the services node, as the owner; nothing here opens inbound ports):
