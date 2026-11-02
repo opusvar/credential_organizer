@@ -42,6 +42,19 @@ class Site:
     vault_url: str = ""                     # default https://<base_domain>:<vault_port>/vault
     namespaces: dict[str, str] = field(default_factory=lambda: {
         "cvc": "cvc", "pki": "pki", "auth": "auth"})
+    # MQTT broker for cvc/approvals + cvc/audits (env MQTT_HOST/MQTT_PORT/MQTT_USERNAME win).
+    # Only the username is configured here; MQTT_PASSWORD stays env-only.
+    mqtt_host: str = ""                     # "" -> no MQTT publishing unless env opts in
+    mqtt_port: int = 1883
+    mqtt_username: str = ""                 # the broker's MQTT user (sole writer of cvc/#)
+    # ntfy push (env CVC_NTFY_SERVERS / CVC_NTFY_TOPICS / CVC_APPROVAL_CARD_URL win).
+    # Tokens are env-only (CVC_NTFY_TOKEN_<n>), never in site.yaml.
+    # Public ntfy hostname behind the Cloudflare Tunnel (D27). Left open on purpose:
+    # "" -> ntfy.<base_domain>. Set this once a Cloudflare-managed domain is chosen.
+    ntfy_host: str = ""
+    ntfy_servers: tuple[str, ...] = ()      # failover order
+    ntfy_topics: dict[str, str] = field(default_factory=dict)   # person id -> topic
+    approval_card_url: str = ""             # "" -> "{dashboard}/agents/approvals/{id}"
     source: str = "<generic defaults>"
 
     def __post_init__(self) -> None:
@@ -70,6 +83,8 @@ class Site:
             "SITE_NS_CVC": self.namespaces.get("cvc", "cvc"),
             "SITE_NS_PKI": self.namespaces.get("pki", "pki"),
             "SITE_NS_AUTH": self.namespaces.get("auth", "auth"),
+            "SITE_NTFY_HOST": self.ntfy_host or f"ntfy.{self.base_domain}",
+            "SITE_MQTT_USER": self.mqtt_username,
         }
 
 
@@ -98,6 +113,21 @@ def from_mapping(data: dict, source: str = "<mapping>") -> Site:
         kw["default_owner_ids"] = tuple(str(o) for o in owners)
     if "namespaces" in kw:
         kw["namespaces"] = {**GENERIC.namespaces, **(kw["namespaces"] or {})}
+    servers = kw.get("ntfy_servers")
+    if isinstance(servers, str):
+        servers = [u for u in servers.split(",")]
+    if servers is not None:
+        kw["ntfy_servers"] = tuple(str(u).strip() for u in servers if str(u).strip())
+    if "ntfy_topics" in kw:
+        topics = kw["ntfy_topics"] or {}
+        if not isinstance(topics, dict):
+            raise SiteError(f"{source}: ntfy_topics must be a mapping of person id -> topic")
+        kw["ntfy_topics"] = {str(k): str(v) for k, v in topics.items()}
+    for k in ("mqtt_host", "mqtt_username", "approval_card_url"):
+        if k in kw:
+            kw[k] = "" if kw[k] is None else str(kw[k])
+    if "mqtt_port" in kw:
+        kw["mqtt_port"] = int(kw["mqtt_port"])
     kw.setdefault("ca_url", "")
     kw.setdefault("vault_url", "")
     return replace(GENERIC, **kw, source=source)

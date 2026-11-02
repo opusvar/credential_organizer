@@ -1,0 +1,25 @@
+# cloudflared config for the ntfy tunnel (D27). NOT applied - template only.
+# Rendered by `cvc-site render-deploy`; ${SITE_NTFY_HOST} = site ntfy_host (default ntfy.<base_domain>).
+# base_domain must be a zone on your Cloudflare account for this hostname to resolve.
+#
+# One-time setup (on the services node, as the owner; nothing here opens inbound ports):
+#   cloudflared tunnel login                         # authorizes the CF zone
+#   cloudflared tunnel create cvc-ntfy               # writes <uuid>.json credentials
+#   sudo install -D -m 600 ~/.cloudflared/<uuid>.json /etc/cvc/cloudflared/ntfy-tunnel.json
+#   cloudflared tunnel route dns cvc-ntfy ${SITE_NTFY_HOST}
+# then set `tunnel:` below to the tunnel name or UUID.
+tunnel: cvc-ntfy
+credentials-file: /etc/cloudflared/creds.json
+metrics: 127.0.0.1:20241
+no-autoupdate: true
+
+ingress:
+  # Only the ntfy host is published. ntfy keepalive (45 s) < Cloudflare idle (100 s), so
+  # long-lived phone subscriptions survive.
+  - hostname: ${SITE_NTFY_HOST}
+    service: http://127.0.0.1:2586
+    originRequest:
+      connectTimeout: 10s
+      noTLSVerify: false
+  # Everything else is refused at the edge of the tunnel.
+  - service: http_status:404

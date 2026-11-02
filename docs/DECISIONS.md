@@ -415,3 +415,14 @@ OAuth scopes are registry systems labelled per D16; the broker holds refresh tok
 
 ## D26 — Agent gateway ("Clear for agents")  **[DECIDED 2026-11-01]**
 Enroll once, fast lane via brokered short-lived scoped tokens, screening still applies, per-task boarding pass, full dual-attribution audit; exposed as MCP server and HTTP credential proxy. See [AGENT-GATEWAY.md](AGENT-GATEWAY.md).
+
+## D27 — ntfy hosting: services node + Cloudflare Tunnel  **[DECIDED 2026-11-01]**
+Self-hosted ntfy (option D) runs on the services node as a nerdctl container (never docker),
+bound to loopback, and is public ONLY through a Cloudflare Tunnel (`cloudflared`,
+outbound-only, no router ports) at `ntfy.<base_domain>`. ntfy.sh reserved topics stay as the
+fallback (option C). iOS uses `upstream-base-url: https://ntfy.sh`. This replaces the earlier
+small-VPS recommendation in `deploy/ntfy/README.md`. Accepted costs: the internet-facing
+process shares a host with the broker (mitigated by a read-only, non-root, capability-free
+container on loopback and an ingress that publishes one hostname), and Cloudflare terminates
+TLS and sees the minimal message text. Open item: "services node down" alerting needs an
+external uptime check, to be added later. See [NOTIFICATIONS.md](NOTIFICATIONS.md).

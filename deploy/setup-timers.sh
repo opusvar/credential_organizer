@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# setup-timers.sh — install cvc-remind and cvc-backup as systemd USER timers (D10).
+# setup-timers.sh — install cvc-remind, cvc-backup and cvc-notify as systemd USER timers
+# (D10; cvc-notify per the D18 addendum and D27).
 #
 # Run once as admin on the OPi. This replaces the k3s CronJob deployment: the jobs now
 # run on the host, where the `onedrive` client is already installed and authenticated
@@ -10,11 +11,11 @@
 #   0. Preflight: the cvc console scripts and `bw` are actually reachable from a
 #      systemd user unit's minimal environment. This is the step that catches the two
 #      ways this deployment silently fails (see NOTES at the bottom).
-#   1. Installs deploy/cvc-{remind,backup}.{service,timer} into ~/.config/systemd/user/
+#   1. Installs deploy/cvc-{remind,backup,notify}.{service,timer} into ~/.config/systemd/user/
 #   2. systemctl --user daemon-reload
 #   3. Creates ~/.config/cvc (700) and ~/.local/share/cvc/bw (700)
 #   4. Creates the local backup dir (700) and the OneDrive staging dir (mkdir -p)
-#   5. Prints the commands to create remind.env / backup.env. It NEVER creates them —
+#   5. Prints the commands to create remind.env / backup.env / notify.env. It NEVER creates them —
 #      they hold real credentials.
 #   6. Enables and starts both timers, then shows the schedule
 #
@@ -51,8 +52,9 @@ BACKUP_DIR="/mnt/data/cvc-backups"    # local primary copy (matches cvc-backup.s
 ONEDRIVE_DEST_DIR="/mnt/data/onedrive/dan_ai_tool_dock/cvc-backups"
 ONEDRIVE_CONF="$HOME/.config/onedrive"
 
-UNITS=(cvc-remind.service cvc-remind.timer cvc-backup.service cvc-backup.timer)
-TIMERS=(cvc-remind.timer cvc-backup.timer)
+UNITS=(cvc-remind.service cvc-remind.timer cvc-backup.service cvc-backup.timer
+       cvc-notify.service cvc-notify.timer)
+TIMERS=(cvc-remind.timer cvc-backup.timer cvc-notify.timer)
 
 DRY_RUN=0
 NO_ENABLE=0
@@ -69,7 +71,7 @@ usage() {
     cat <<EOF
 Usage: $(basename "${BASH_SOURCE[0]}") [--dry-run] [--no-enable] [--help]
 
-Install cvc-remind and cvc-backup as systemd user timers on this host (D10).
+Install cvc-remind, cvc-backup and cvc-notify as systemd user timers on this host (D10).
 
 Options:
   --dry-run     Report what would change and make no changes.
@@ -79,7 +81,8 @@ Options:
 Next steps after this script:
   install -m 600 deploy/remind.env.example ~/.config/cvc/remind.env   # then edit
   install -m 600 deploy/backup.env.example ~/.config/cvc/backup.env   # then edit
-  systemctl --user restart cvc-remind.timer cvc-backup.timer
+  install -m 600 deploy/notify.env.example ~/.config/cvc/notify.env   # then edit
+  systemctl --user restart cvc-remind.timer cvc-backup.timer cvc-notify.timer
   systemctl --user start cvc-remind.service     # one-off run, watch the journal
   journalctl --user -u cvc-remind -f
 EOF
@@ -125,7 +128,7 @@ for u in "${UNITS[@]}"; do
         fail "deploy/$u MISSING — cannot continue"
     fi
 done
-for e in remind.env.example backup.env.example; do
+for e in remind.env.example backup.env.example notify.env.example; do
     if [[ -f "$DEPLOY/$e" ]]; then
         ok "deploy/$e present"
     else
@@ -150,7 +153,7 @@ if [[ "$DRY_RUN" -eq 0 ]]; then
     mkdir -p "$BIN_DIR"
 fi
 
-for cmd in cvc-remind cvc-backup; do
+for cmd in cvc-remind cvc-backup cvc-notify; do
     # Resolve the real console script, ignoring anything already in ~/.local/bin so a
     # stale/broken symlink there cannot satisfy its own check.
     TARGET=""
@@ -283,8 +286,9 @@ else
     if command -v systemd-analyze >/dev/null 2>&1; then
         VERIFY_OUT="$(systemd-analyze --user verify \
             "$UNIT_DIR/cvc-remind.service" "$UNIT_DIR/cvc-remind.timer" \
-            "$UNIT_DIR/cvc-backup.service" "$UNIT_DIR/cvc-backup.timer" 2>&1 \
-            | grep -v 'remind\.env\|backup\.env' || true)"
+            "$UNIT_DIR/cvc-backup.service" "$UNIT_DIR/cvc-backup.timer" \
+            "$UNIT_DIR/cvc-notify.service" "$UNIT_DIR/cvc-notify.timer" 2>&1 \
+            | grep -v 'remind\.env\|backup\.env\|notify\.env' || true)"
         if [[ -z "$VERIFY_OUT" ]]; then
             ok "systemd-analyze verify: clean"
         else
@@ -355,7 +359,8 @@ fi
 section "5. Env files (must be created by hand — real credentials)"
 
 MISSING_ENV=()
-for pair in "remind.env:remind.env.example" "backup.env:backup.env.example"; do
+for pair in "remind.env:remind.env.example" "backup.env:backup.env.example" \
+            "notify.env:notify.env.example"; do
     f="${pair%%:*}"; ex="${pair##*:}"
     if [[ -f "$CONFIG_DIR/$f" ]]; then
         MODE="$(stat -c '%a' "$CONFIG_DIR/$f" 2>/dev/null || echo '?')"
@@ -431,18 +436,19 @@ fi
 # ── summary ───────────────────────────────────────────────────────────────────
 section "Summary"
 
-echo "  Units:      $UNIT_DIR/cvc-{remind,backup}.{service,timer}"
-echo "  Env files:  $CONFIG_DIR/{remind,backup}.env  (mode 600, not in git)"
+echo "  Units:      $UNIT_DIR/cvc-{remind,backup,notify}.{service,timer}"
+echo "  Env files:  $CONFIG_DIR/{remind,backup,notify}.env  (mode 600, not in git)"
 echo "  bw appdata: $BW_DATA_DIR"
 echo "  Backups:    $BACKUP_DIR (local) -> $ONEDRIVE_DEST_DIR (OneDrive)"
 echo "  cvc-remind: daily 07:00 UTC"
 echo "  cvc-backup: weekly Sunday 02:00 UTC"
-echo "  Logs:       journalctl --user -u cvc-remind   /   -u cvc-backup"
+echo "  cvc-notify: every minute (escalations, quiet-hours flush, digest)"
+echo "  Logs:       journalctl --user -u cvc-remind  /  -u cvc-backup  /  -u cvc-notify"
 
 if [[ "$FAILURES" -eq 0 ]]; then
     echo
     echo -e "${GREEN}Timer install complete.${NC}"
-    echo "Next steps: fill in ~/.config/cvc/remind.env and ~/.config/cvc/backup.env, then run: systemctl --user restart cvc-remind.timer cvc-backup.timer"
+    echo "Next steps: fill in ~/.config/cvc/{remind,backup,notify}.env, then run: systemctl --user restart cvc-remind.timer cvc-backup.timer cvc-notify.timer"
     echo
     echo "  Then prove a real run before trusting the schedule:"
     echo "    systemctl --user start cvc-remind.service && journalctl --user -u cvc-remind -n 50"
@@ -452,7 +458,7 @@ fi
 
 echo
 echo -e "${RED}$FAILURES check(s) failed — see above.${NC}"
-echo "Next steps: fill in ~/.config/cvc/remind.env and ~/.config/cvc/backup.env, then run: systemctl --user restart cvc-remind.timer cvc-backup.timer"
+echo "Next steps: fill in ~/.config/cvc/{remind,backup,notify}.env, then run: systemctl --user restart cvc-remind.timer cvc-backup.timer cvc-notify.timer"
 exit 1
 
 # ── NOTES — the two non-obvious ways this deployment fails ────────────────────

@@ -1,5 +1,8 @@
 """Notifier configuration from env (+ site defaults + registry people).
 
+Env wins over site.yaml (ntfy_servers / ntfy_topics / approval_card_url); tokens
+are env-only.
+
 Env (tokens are env-only and never logged or stored in config objects):
   CVC_NTFY_SERVERS     comma list, in failover order, e.g.
                        "https://ntfy.example.com,https://ntfy.sh"  (option D primary, C fallback)
@@ -80,15 +83,21 @@ class NotifyConfig:
         env = os.environ if env is None else env
         urls = [u.strip() for u in env.get("CVC_NTFY_SERVERS", "").split(",") if u.strip()]
         if not urls:
+            urls = list(getattr(site, "ntfy_servers", ()) or ())
+        if not urls:
             return None
         backends = [Backend(u, f"CVC_NTFY_TOKEN_{i}") for i, u in enumerate(urls, 1)]
-        topics = dict(kv.split("=", 1) for kv in env.get("CVC_NTFY_TOPICS", "").split(",")
-                      if "=" in kv)
+        if env.get("CVC_NTFY_TOPICS", "").strip():
+            topics = dict(kv.split("=", 1) for kv in env["CVC_NTFY_TOPICS"].split(",")
+                          if "=" in kv)
+        else:
+            topics = dict(getattr(site, "ntfy_topics", None) or {})
         base = getattr(site, "base_domain", "cvc.example.ts.net")
         return cls(
             backends=backends,
             dashboard_url=env.get("CVC_DASHBOARD_URL") or f"https://dashboard.{base}",
-            card_template=env.get("CVC_APPROVAL_CARD_URL") or cls.card_template,
+            card_template=(env.get("CVC_APPROVAL_CARD_URL")
+                           or getattr(site, "approval_card_url", "") or cls.card_template),
             topics={k.strip(): v.strip() for k, v in topics.items()},
             people=dict(people or {}),
             quiet=parse_quiet(env.get("CVC_NOTIFY_QUIET", DEFAULT_QUIET)),
