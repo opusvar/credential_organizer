@@ -120,6 +120,8 @@ class ApprovalRequest:
     on_timeout: str = "deny"
     version: int = 1                # bumped on every state change (HTTP ETag / If-Match)
     schema: str = SCHEMA
+    kind: str = "approval"          # "approval" | "escalation" (D27)
+    escalation: dict[str, Any] | None = None   # D27 card extras (tiers, resource, uses, ttl)
 
     @property
     def etag(self) -> str:
@@ -190,7 +192,10 @@ def scan_secrets(node: Any, path: str = "") -> list[str]:
 
 _REQUIRED_STR = ("id", "created_at", "deadline", "intent", "summary", "if_approved",
                  "if_denied")
-_OPTIONAL = {"details_url", "decided_by", "decided_at", "version"}
+_OPTIONAL = {"details_url", "decided_by", "decided_at", "version", "kind", "escalation"}
+KINDS = ("approval", "escalation")
+_ESC_KEYS = {"current_tier", "requested_tier", "resource", "uses", "ttl_s", "physical",
+             "owner_only"}
 _KEYS = {"schema", "id", "created_at", "deadline", "urgency", "requester", "intent", "summary",
          "labels", "risk", "if_approved", "if_denied", "on_timeout", "approver_min_tier",
          "requires_passkey", "status"} | _OPTIONAL
@@ -223,6 +228,17 @@ def validate(d: Any) -> list[str]:
     if "version" in d and (not isinstance(d["version"], int) or isinstance(d["version"], bool)
                            or d["version"] < 1):
         errs.append("version: must be a positive integer")
+    if d.get("kind", "approval") not in KINDS:
+        errs.append(f"kind: must be one of {list(KINDS)}")
+    esc = d.get("escalation")
+    if d.get("kind") == "escalation":
+        if not isinstance(esc, dict) or set(esc) != _ESC_KEYS:
+            errs.append(f"escalation: must have fields {sorted(_ESC_KEYS)}")
+        elif esc["current_tier"] not in AGENT_TIERS or \
+                esc["requested_tier"] not in (*AGENT_TIERS, "owner"):
+            errs.append("escalation: current_tier/requested_tier invalid")
+    elif esc is not None:
+        errs.append("escalation: only allowed when kind is 'escalation'")
     if not isinstance(d["requires_passkey"], bool):
         errs.append("requires_passkey: must be a boolean")
     r = d["requester"]

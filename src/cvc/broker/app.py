@@ -26,7 +26,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
@@ -35,6 +35,8 @@ from ..approvals import inspect as approvals_inspect
 from ..approvals import model as approvals_model
 from ..approvals.publisher import from_env as _approvals_publisher
 from ..approvals.service import ApprovalService, DecideError
+from ..escalation import EscalationError, EscalationRefused, EscalationStore
+from ..escalation import evaluate as escalation_evaluate
 from ..vault.client import BwClient, VaultError, _run, _session
 from .acl import Acl
 from .audit import AuditEvent, AuditLog
@@ -160,6 +162,19 @@ def _approval_service() -> ApprovalService:
                                         state_path=os.environ.get("CVC_APPROVALS_STATE"))
         approvals_inspect.attach(_APPROVAL_SVC)
     return _APPROVAL_SVC
+
+
+_ESCALATIONS: EscalationStore | None = None
+
+
+def _escalations() -> EscalationStore:
+    """D27 escalation store, sharing the approvals service. State: CVC_ESCALATIONS_STATE."""
+    global _ESCALATIONS
+    if _ESCALATIONS is None:
+        _ESCALATIONS = EscalationStore(
+            os.environ.get("CVC_ESCALATIONS_STATE", "/var/lib/cvc/escalations.json"),
+            _approval_service())
+    return _ESCALATIONS
 
 
 def _inspector() -> approvals_inspect.Inspector:
@@ -592,6 +607,11 @@ def fetch_credential(
     approvals: ApprovalStore = Depends(_approvals),  # noqa: B008
     x_approval_id: str | None = Header(None, max_length=64,
                                        description="Approved approval id (tier high, physical)."),
+    x_escalation_id: str | None = Header(None, max_length=64,
+                                         description="D27 approved escalation id."),
+    x_escalation_nonce: str | None = Header(None, max_length=128,
+                                            description="Nonce returned with the escalation."),
+    escalations: EscalationStore = Depends(_escalations),  # noqa: B008
 ) -> JSONResponse:
     token = _bearer(authorization)
     obo = _obo(acl, x_agent_id)
@@ -602,18 +622,41 @@ def fetch_credential(
                                 on_behalf_of=obo))
         raise HTTPException(status_code=status, detail=reason)
 
-    # 1. Authenticate (service token or short-lived session token).
-    ok, session = _authn(acl, sessions, x_agent_id, token, enforce_session=True)
-    if not ok:
-        _deny(401, "authentication failed", "deny:auth")
-    if session is not None and req.credential.lower() not in session.scope:
-        _deny(403, "credential outside session token scope")
+    # 0. D27 escalation: a single-use grant replaces the ACL/tier checks for this one
+    #    fetch. It is bound to the agent's service token, the exact credential and the nonce.
+    if x_escalation_id is not None:
+        if not acl.authenticate(x_agent_id, token):
+            _deny(401, "authentication failed", "deny:auth")
+        try:
+            esc = escalations.consume(x_escalation_id, agent=x_agent_id, token=token,
+                                      resource=f"credential:{req.credential.lower()}",
+                                      nonce=x_escalation_nonce, action="read")
+        except EscalationError as e:
+            _deny(403, e.reason, f"deny:escalation:{e.code}")
+        obo = esc.on_behalf_of or obo
+        audit.record(AuditEvent(agent=x_agent_id, credential=req.credential,
+                                purpose=req.purpose, outcome=f"allow:escalation:{esc.id}",
+                                on_behalf_of=obo))
+    else:
+        # 1. Authenticate (service token or short-lived session token).
+        ok, session = _authn(acl, sessions, x_agent_id, token, enforce_session=True)
+        if not ok:
+            _deny(401, "authentication failed", "deny:auth")
+        if session is not None and req.credential.lower() not in session.scope:
+            _deny(403, "credential outside session token scope")
 
-    # 2. Authorize (default-deny).
-    decision = acl.authorize(x_agent_id, req.credential, req.purpose)
-    if not decision.allowed:
-        _deny(403, decision.reason)
+        # 2. Authorize (default-deny).
+        decision = acl.authorize(x_agent_id, req.credential, req.purpose)
+        if not decision.allowed:
+            _deny(403, decision.reason)
+        _tier_checks(acl, approvals, x_agent_id, req, obo, x_approval_id, _deny)
+        # 3. Audit the grant BEFORE any secret leaves the system.
+        audit.record(AuditEvent(agent=x_agent_id, credential=req.credential,
+                                purpose=req.purpose, outcome="allow", on_behalf_of=obo))
+    return _deliver(req, x_agent_id, bw)
 
+
+def _tier_checks(acl, approvals, x_agent_id, req, obo, x_approval_id, _deny) -> None:
     # 2b. Tier enforcement.
     tier = acl.tier(x_agent_id)
     if tier == "assistant" and not obo:
@@ -624,10 +667,8 @@ def fetch_credential(
             and not approvals.consume(x_approval_id, x_agent_id, req.credential, req.purpose)):
         _deny(403, "physical action requires human approval")
 
-    # 3. Audit the grant BEFORE any secret leaves the system.
-    audit.record(AuditEvent(agent=x_agent_id, credential=req.credential,
-                            purpose=req.purpose, outcome="allow", on_behalf_of=obo))
 
+def _deliver(req: FetchRequest, x_agent_id: str, bw: BwClient) -> JSONResponse:
     # 4. Retrieve the requested field from the vault.
     try:
         if req.field == "totp":
@@ -985,6 +1026,71 @@ def whoami(
     person, tier = _tiergate_identity(x_cvc_person, x_cvc_tier)
     return {"person": person, "tier": tier,
             "passkey": bool(x_authentik_username) and x_authentik_username == person}
+
+
+@app.post("/v1/escalations", tags=["credentials"],
+          summary="D27: agent requests a single-use exemption for one action")
+def create_escalation(
+    body: dict = Body(...),  # noqa: B008 - strict validation in cvc.escalation.policy
+    x_agent_id: str = Header(..., max_length=64),
+    authorization: str = Header(...),
+    acl: Acl = Depends(_acl),  # noqa: B008
+    audit: AuditLog = Depends(_audit),  # noqa: B008
+    escalations: EscalationStore = Depends(_escalations),  # noqa: B008
+) -> JSONResponse:
+    token = _bearer(authorization)
+    if not acl.authenticate(x_agent_id, token):      # service token only, never a session
+        raise HTTPException(status_code=401, detail="authentication failed")
+    tier = acl.tier(x_agent_id)
+    target = str(body.get("resource", "-"))[:128] if isinstance(body, dict) else "-"
+
+    def _log(outcome: str, obo: str | None) -> None:
+        audit.record(AuditEvent(agent=x_agent_id, credential=target, purpose="escalation",
+                                outcome=outcome, on_behalf_of=obo))
+
+    default_obo = _obo(acl, x_agent_id)
+    try:
+        a = escalation_evaluate(x_agent_id, tier, body, on_behalf_of_default=default_obo)
+    except EscalationRefused as e:
+        _log(f"escalation:refused:{e.code}", default_obo)
+        raise HTTPException(status_code=e.status,
+                            detail={"code": e.code, "reason": e.reason}) from None
+    if a.already_permitted:
+        _log("escalation:already_permitted", a.on_behalf_of)
+        return JSONResponse(content={"status": "already_permitted",
+                                     "detail": "the agent's tier already allows this action"})
+    escalations.mark_non_human(acl._agents)
+    try:
+        esc, nonce, suggestion = escalations.request(a, token)
+    except EscalationError as e:
+        _log(f"escalation:refused:{e.code}", a.on_behalf_of)
+        raise HTTPException(status_code=e.status,
+                            detail={"code": e.code, "reason": e.reason}) from None
+    _log(f"escalation:requested:{esc.id}", a.on_behalf_of)
+    out = {"id": esc.id, "status": esc.status, "nonce": nonce, "approval_id": esc.approval_id,
+           "current_tier": esc.current_tier, "requested_tier": esc.required_tier,
+           "approver_min_tier": esc.approver_min_tier, "ttl_s": esc.ttl_s}
+    if suggestion:
+        out["audit_suggestion"] = suggestion
+    return JSONResponse(status_code=201, content=out, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/v1/escalations/{escalation_id}", tags=["credentials"],
+         summary="D27: escalation status (the requesting agent only)")
+def get_escalation(
+    escalation_id: str,
+    x_agent_id: str = Header(..., max_length=64),
+    authorization: str = Header(...),
+    acl: Acl = Depends(_acl),  # noqa: B008
+    escalations: EscalationStore = Depends(_escalations),  # noqa: B008
+) -> dict:
+    if not acl.authenticate(x_agent_id, _bearer(authorization)):
+        raise HTTPException(status_code=401, detail="authentication failed")
+    escalations.mark_non_human(acl._agents)
+    esc = escalations.get(escalation_id)
+    if esc is None or esc.agent != x_agent_id:
+        raise HTTPException(status_code=404, detail="no such escalation")
+    return esc.public()
 
 
 @app.post("/v1/approvals/{approval_id}/decide", tags=["approvals"],

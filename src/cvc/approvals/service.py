@@ -50,6 +50,14 @@ def check_authority(req: ApprovalRequest, person: str | None, tier: str | None,
     if not person or tier not in PERSON_RANK:
         raise DecideError(403, "approver identity/tier unknown")
     is_owner = tier == "owner"
+    if getattr(req, "kind", "approval") == "escalation":
+        # D27: no on_behalf_of exemption; the grant rule tier is the floor for everyone.
+        if PERSON_RANK[tier] < PERSON_RANK[req.approver_min_tier]:
+            raise DecideError(403, f"escalation needs an approver of tier "
+                                   f">= {req.approver_min_tier}")
+        if req.requires_passkey and (not passkey_user or passkey_user != person):
+            raise DecideError(403, "passkey (Authentik) login required for this approval")
+        return
     obo = req.requester.on_behalf_of
     if req.requester.tier == "assistant" and not (is_owner or (obo and person == obo)):
         raise DecideError(403, "assistant requests are decided by the on_behalf_of "

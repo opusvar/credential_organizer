@@ -415,3 +415,21 @@ OAuth scopes are registry systems labelled per D16; the broker holds refresh tok
 
 ## D26 — Agent gateway ("Clear for agents")  **[DECIDED 2026-11-01]**
 Enroll once, fast lane via brokered short-lived scoped tokens, screening still applies, per-task boarding pass, full dual-attribution audit; exposed as MCP server and HTTP credential proxy. See [AGENT-GATEWAY.md](AGENT-GATEWAY.md).
+
+## D27 — Agent escalation (one-action exemptions)  **[DECIDED 2026-11-01]**
+A lower-tier agent may ask for ONE specific action above its effective D16 tier (min(agent,
+sponsor)): agent, action verb, data level, one exact resource (`credential:<uuid>`,
+`ha:<entity_id>`, `system:<name>`, `task:<id>`), purpose, justification, optional
+on_behalf_of. Wildcards are rejected. If the D16 cell is already A the answer is "already
+permitted" and nothing is created; D and P cells are escalatable. Approver = a human at least
+2 tiers above the action's required tier (the D12 grant rule); owner-only for secret data,
+any delegate, and required tier high; physical actuation keeps D18's red/passkey/owner floor
+and a non-human approver voids the grant. Hard ceilings, refused outright: owner keys,
+takeover, estate delegation, tier/role changes, grants to other agents, delegating a whole
+system. The grant is single-use, 15 min by default (60 s to 24 h), bound to the agent's
+service token, the exact resource and the request nonce, and consumed atomically by the
+broker. Delivered as a `cvc.approval.v1` card with `kind: escalation` (timeout = deny).
+Limits: 3 pending and 10 per rolling 24 h per agent; a denied identical request is blocked
+for 1 h; 3 requests for the same data/action in 7 days log an audit suggestion to re-tier.
+Audited in the broker log and a hash-chained history with agent + on_behalf_of. See
+[ESCALATION.md](ESCALATION.md).
