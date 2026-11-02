@@ -54,6 +54,7 @@ class Context:
     rotation_max_age_days: int = 180
     run: Runner = systemctl_runner
     vault_items: Callable[[], list[dict]] | None = None   # None -> rotation check skipped
+    tempdevice_dir: str | None = None     # None -> temp-device check skipped
     _registry: Any = field(default=None, repr=False)
 
     @property
@@ -261,6 +262,42 @@ def passwordless_check(ctx: Context) -> list[Finding]:
                 out.append(Finding("passwordless", f"people.{pid}:{start}", "info",
                                    f"Passwordless block active for {pid}",
                                    detail=f"{left} days left"))
+    return out
+
+
+# ── temporary devices (D27) ─────────────────────────────────────────────────
+@check("tempdevice")
+def tempdevice_check(ctx: Context) -> list[Finding]:
+    """Bridges older than 7 days, and people who keep getting bridges."""
+    if not ctx.tempdevice_dir:
+        return []
+    from cvc.tempdevice.model import AUDIT_MAX_AGE, REPEAT_THRESHOLD, REPEAT_WINDOW, parse_ts
+    from cvc.tempdevice.service import BridgeStore
+    try:
+        bridges = BridgeStore(ctx.tempdevice_dir).load()
+    except (OSError, ValueError, TypeError) as e:
+        return [Finding("tempdevice", "tempdevice:state", "warn",
+                        "Temporary-device state unreadable", detail=str(e))]
+    now = ctx.now if ctx.now.tzinfo else ctx.now.replace(tzinfo=dt.UTC)
+    out = []
+    recent: dict[str, int] = {}
+    for b in sorted(bridges.values(), key=lambda b: b.id):
+        if b.status == "active" and b.issued_at:
+            age = now - parse_ts(b.issued_at)
+            if age > AUDIT_MAX_AGE:
+                out.append(Finding("tempdevice", f"bridge:{b.id}", "warn",
+                                   f"Temporary device {b.id} is {age.days} days old",
+                                   detail=f"{b.person}; expires {b.expires_at}",
+                                   suggested_fix=f"enroll a permanent device, then "
+                                                 f"`cvc-tempdevice promote {b.person} DEVICE`"))
+        if now - parse_ts(b.requested_at) <= REPEAT_WINDOW and b.status != "denied":
+            recent[b.person] = recent.get(b.person, 0) + 1
+    for person, n in sorted(recent.items()):
+        if n >= REPEAT_THRESHOLD:
+            out.append(Finding("tempdevice", f"people.{person}:repeat", "warn",
+                               f"{person} had {n} temporary devices in "
+                               f"{REPEAT_WINDOW.days} days",
+                               suggested_fix="find out why no permanent device is enrolled"))
     return out
 
 

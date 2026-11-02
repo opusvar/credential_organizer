@@ -415,3 +415,41 @@ OAuth scopes are registry systems labelled per D16; the broker holds refresh tok
 
 ## D26 — Agent gateway ("Clear for agents")  **[DECIDED 2026-11-01]**
 Enroll once, fast lane via brokered short-lived scoped tokens, screening still applies, per-task boarding pass, full dual-attribution audit; exposed as MCP server and HTTP credential proxy. See [AGENT-GATEWAY.md](AGENT-GATEWAY.md).
+
+## D27 — Temporary (bridge) devices  **[DECIDED 2026-11-01]**
+**Problem:** a person sometimes needs access from a device that is not (yet) theirs: a new or
+borrowed phone, a loaner laptop, a replacement for a lost or broken device, travel. D13 only
+knows permanent per-device certs, and D23 blocks passwordless access for 7 days after a lost
+report, so the person had no path back to cert-based access in that window.
+**Decision:** a *bridge*: a short-lived step-ca device cert, managed by `cvc-tempdevice
+request|approve|deny|extend|promote|revoke|list|sweep` (`src/cvc/tempdevice/`). See
+[TEMP-DEVICE.md](TEMP-DEVICE.md).
+- **SANs:** `urn:cvc:person:<p>`, `urn:cvc:device:<p>-temp-<n>`, `urn:cvc:tier:<capped>` and
+  the temp flag `urn:cvc:temp:<expires_at>`. `device-leaf.tpl` renders the flag from a `temp`
+  claim and refuses a temp cert above medium.
+- **Tier cap:** effective tier = min(person tier, medium). tier-gate caps any cert with the temp
+  flag *or* a `-temp-<n>` device id at medium, denies an expired/unparseable flag, and passes
+  `X-Cvc-Temp` / `X-Cvc-Temp-Expires`. The broker re-applies the cap on `/v1/whoami` and
+  `/decide`. High/admin/owner actions never run from a bridge. Owner actions still need the
+  physical YubiKey (its own PIV cert + FIDO2), which is the second factor and works when
+  plugged in; a bridge can never become an owner key, host a key, or be added as a permanent
+  device (`cvc-access device add` refuses `-temp-` ids).
+- **Lifetime:** 72 h by default, extendable to 14 days in total; every extension needs a new
+  approval. Pending requests/extensions expire (deny) after 24 h.
+- **Issuing:** the person proves password + passkey, or a YubiKey. An approver at least 2 tiers
+  above the *capped* tier (the D12 grant rule; owners always) approves with a passkey. Requests
+  go through the approvals pipeline (card + ntfy) and card decisions are re-checked against
+  these rules. Owners/admins may self-issue with a YubiKey. During a D23 lost-device block the
+  bridge still works but always needs someone else's approval (no self-issue, no
+  self-approval).
+- **Limits:** one open (pending or active) bridge per person. Guests never. Agents and machines
+  never.
+- **Ending:** `cvc-access device set-cert` on a permanent device of the person (the normal
+  onboard/enroll flow) promotes it and revokes the bridge; `cvc-tempdevice promote` does the
+  same by hand. Bridges auto-expire (`sweep`). The person or an owner can revoke at any time.
+  `cvc-access person remove` revokes all of the person's bridges. step-ca revoke commands are
+  printed, never run.
+- **Visibility:** `/v1/whoami` returns `temp`, `temp_expires_at`, `temp_hours_left` for the
+  dashboard banner "Temporary device: N hours left". The `tempdevice` audit check (D24) flags
+  bridges older than 7 days and people with 3+ bridges in 90 days. Every state change and every
+  refused approval/revoke goes to a hash-chained audit log.

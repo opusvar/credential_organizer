@@ -46,7 +46,7 @@ AUTHENTIK_HEADERS = [
     "X-authentik-meta-jwks", "X-authentik-meta-outpost", "X-authentik-meta-provider",
     "X-authentik-meta-app", "X-authentik-meta-version",
 ]
-CVC_HEADERS = ["X-Cvc-Person", "X-Cvc-Tier", "X-Cvc-Device"]
+CVC_HEADERS = ["X-Cvc-Person", "X-Cvc-Tier", "X-Cvc-Device", "X-Cvc-Temp", "X-Cvc-Temp-Expires"]
 STRIPPED_HEADERS = [
     "X-Forwarded-Tls-Client-Cert", "X-Forwarded-Tls-Client-Cert-Info",
     *CVC_HEADERS, *AUTHENTIK_HEADERS,

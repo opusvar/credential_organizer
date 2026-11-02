@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import base64
+import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -26,6 +28,9 @@ PASSKEY_TIERS = frozenset({"high", "admin", "owner"})
 URN_TIER = "urn:cvc:tier:"
 URN_PERSON = "urn:cvc:person:"
 URN_DEVICE = "urn:cvc:device:"
+URN_TEMP = "urn:cvc:temp:"          # bridge (temporary device) flag, value = expiry (D27)
+TEMP_TIER_CAP = "medium"
+_TEMP_DEVICE = re.compile(r"^.+-temp-[0-9]+$")
 
 _PEM_BEGIN = "-----BEGIN CERTIFICATE-----"
 _PEM_END = "-----END CERTIFICATE-----"
@@ -40,6 +45,8 @@ class Identity:
     tier: str | None
     person: str | None
     device: str | None
+    temp: bool = False
+    temp_expires: str | None = None
 
 
 @dataclass(frozen=True)
@@ -98,15 +105,37 @@ def extract_identity(cert: x509.Certificate) -> Identity:
         san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
     except x509.ExtensionNotFound:
         return Identity(None, None, None)
-    tier = person = device = None
+    tier = person = device = temp_expires = None
+    temp = False
     for uri in san.get_values_for_type(x509.UniformResourceIdentifier):
+        if uri.startswith(URN_TEMP):
+            temp = True
+            temp_expires = temp_expires or uri[len(URN_TEMP):] or None
+            continue
         if uri.startswith(URN_TIER) and tier is None:
             tier = uri[len(URN_TIER):]
         elif uri.startswith(URN_PERSON) and person is None:
             person = uri[len(URN_PERSON):]
         elif uri.startswith(URN_DEVICE) and device is None:
             device = uri[len(URN_DEVICE):]
-    return Identity(tier or None, person or None, device or None)
+    device = device or None
+    temp = temp or bool(device and _TEMP_DEVICE.match(device))
+    tier = tier or None
+    if temp and tier in TIER_RANK and TIER_RANK[tier] > TIER_RANK[TEMP_TIER_CAP]:
+        tier = TEMP_TIER_CAP           # never above medium from a temp device
+    return Identity(tier, person or None, device, temp, temp_expires if temp else None)
+
+
+def _temp_expired(ident: Identity, now: datetime) -> bool:
+    if not ident.temp_expires:
+        return False
+    try:
+        end = datetime.fromisoformat(ident.temp_expires)
+    except ValueError:
+        return True                    # unparseable flag: treat as expired (fail closed)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=UTC)
+    return end <= now
 
 
 @dataclass(frozen=True)
@@ -121,6 +150,7 @@ def decide(
     host: str,
     cert_header: str | None,
     authentik_user: str | None,
+    now: datetime | None = None,
 ) -> Decision:
     min_tier = config.min_tier_for(host or "")
     if min_tier is None:
@@ -135,6 +165,8 @@ def decide(
         return Decision(False, "certificate has no valid tier", ident)
     if ident.person is None:
         return Decision(False, "certificate has no person", ident)
+    if ident.temp and _temp_expired(ident, now or datetime.now(UTC)):
+        return Decision(False, "temporary device expired", ident)
     if TIER_RANK[ident.tier] < TIER_RANK[min_tier]:
         return Decision(False, f"tier {ident.tier} below required {min_tier}", ident)
     if min_tier in PASSKEY_TIERS and not (authentik_user or "").strip():

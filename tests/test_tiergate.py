@@ -172,3 +172,56 @@ def test_bad_config_rejected():
 
 def test_healthz(client):
     assert client.get("/healthz").json() == {"ok": True}
+
+
+# ── D27: temporary (bridge) device certs ────────────────────────────────────
+def _future(hours=48):
+    return (dt.datetime.now(dt.UTC) + dt.timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def temp_cert(tier="medium", device="alex-temp-1", expires=None, flag=True):
+    uris = [f"urn:cvc:tier:{tier}", "urn:cvc:person:alex", f"urn:cvc:device:{device}"]
+    if flag:
+        uris.append(f"urn:cvc:temp:{expires or _future()}")
+    return make_cert(uris)
+
+
+def test_temp_flag_parsed_and_headers(client):
+    end = _future()
+    ident = extract_identity(temp_cert(expires=end))
+    assert ident.temp and ident.temp_expires == end and ident.tier == "medium"
+    r = call(client, "wiki.home", temp_cert(expires=end))
+    assert r.status_code == 200
+    assert r.headers["X-Cvc-Temp"] == "1" and r.headers["X-Cvc-Temp-Expires"] == end
+
+
+def test_permanent_cert_has_no_temp_headers(client):
+    r = call(client, "wiki.home", ident_cert("high"))
+    assert "X-Cvc-Temp" not in r.headers and not extract_identity(ident_cert("high")).temp
+
+
+@pytest.mark.parametrize("tier", ["high", "admin", "owner"])
+def test_temp_tier_capped_at_medium(client, tier):
+    """Even a mis-issued temp cert carrying a high tier is treated as medium."""
+    c = temp_cert(tier=tier)
+    assert extract_identity(c).tier == "medium"
+    assert call(client, "wiki.home", c).headers["X-Cvc-Tier"] == "medium"
+    for host in ("vault.home", "admin.home"):
+        assert call(client, host, c, authentik="alex").status_code == 403
+
+
+def test_temp_device_id_without_flag_still_capped(client):
+    c = temp_cert(tier="owner", flag=False)
+    ident = extract_identity(c)
+    assert ident.temp and ident.tier == "medium" and ident.temp_expires is None
+    assert call(client, "admin.home", c, authentik="alex").status_code == 403
+
+
+def test_low_temp_tier_not_raised():
+    assert extract_identity(temp_cert(tier="low")).tier == "low"
+
+
+@pytest.mark.parametrize("expires", ["2020-01-01T00:00:00Z", "not-a-date"])
+def test_expired_or_garbled_temp_denied(client, expires):
+    r = call(client, "wiki.home", temp_cert(expires=expires))
+    assert r.status_code == 403

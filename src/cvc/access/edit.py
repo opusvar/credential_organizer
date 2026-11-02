@@ -294,6 +294,9 @@ def person_set_tier(data: dict, a: argparse.Namespace, today: dt.date) -> str:
 
 def device_add(data: dict, a: argparse.Namespace, today: dt.date) -> str:
     devs = _section(data, "devices")
+    if re.match(r"^.+-temp-[0-9]+$", a.id):
+        raise EditError(f"{a.id!r} is a temporary-device id (D27); bridges are managed by "
+                        "`cvc-tempdevice` and never become permanent devices or key hosts")
     if a.id in devs:
         raise EditError(f"device {a.id!r} already exists")
     devs[a.id] = {"owner": a.owner, "kind": a.kind,
@@ -586,6 +589,18 @@ def _resolve_site_owner(args: argparse.Namespace) -> None:
             setattr(args, k, site_config.owners_or_default(None, site_config.load())[0])
 
 
+def _tempdevice_after_set_cert(args: argparse.Namespace) -> str:
+    """D27: recording a permanent device's cert promotes it and revokes the bridge."""
+    from cvc.tempdevice.hooks import after_set_cert
+    return after_set_cert(args)
+
+
+def _tempdevice_after_person_remove(args: argparse.Namespace) -> str:
+    """D27: offboarding revokes all of the person's bridges."""
+    from cvc.tempdevice.hooks import after_person_remove
+    return after_person_remove(args)
+
+
 def add_parsers(sub: argparse._SubParsersAction, reg_kw: dict) -> None:
     hw = sub.add_parser("hwkey", help="enroll or revoke hardware keys (YubiKeys)")
     hws = hw.add_subparsers(dest="action", required=True)
@@ -641,7 +656,7 @@ def add_parsers(sub: argparse._SubParsersAction, reg_kw: dict) -> None:
     s.add_argument("--serial", required=True)
     s.add_argument("--fingerprint", required=True, help="SHA-256 of the cert (hex)")
     s.add_argument("--not-after", required=True, help="YYYY-MM-DD")
-    s.set_defaults(edit=device_set_cert)
+    s.set_defaults(edit=device_set_cert, after_commit=_tempdevice_after_set_cert)
     v = dvs.add_parser("revoke")
     v.add_argument("id")
     v.add_argument("--reason", default="manual")
@@ -669,7 +684,7 @@ def add_parsers(sub: argparse._SubParsersAction, reg_kw: dict) -> None:
     pa.set_defaults(edit=_cli_person_add)
     pr = pes.add_parser("remove", help="remove a person, their devices, keys and assistants")
     pr.add_argument("id")
-    pr.set_defaults(edit=person_remove)
+    pr.set_defaults(edit=person_remove, after_commit=_tempdevice_after_person_remove)
     st = pes.add_parser("set-tier", help="change a person's tier")
     st.add_argument("id")
     st.add_argument("--tier", required=True, choices=PERSON_TIERS)
@@ -775,4 +790,10 @@ def run_edit(args: argparse.Namespace, today: dt.date | None = None) -> int:
     print(msg)
     if dry:
         print("dry run: registry not written")
+        return 0
+    hook = getattr(args, "after_commit", None)
+    if hook is not None:
+        extra = hook(args)
+        if extra:
+            print(extra)
     return 0

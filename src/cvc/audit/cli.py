@@ -42,6 +42,7 @@ def context_from_env(args: argparse.Namespace, now: dt.datetime) -> Context:
         deny_window_hours=env_int("CVC_AUDIT_DENY_WINDOW_HOURS", 1),
         rotation_max_age_days=env_int("ROTATION_MAX_AGE_DAYS", 180),
         vault_items=_vault_items_from_env(),
+        tempdevice_dir=e("CVC_TEMPDEVICE_STATE", "~/.local/state/cvc/tempdevice"),
     )
 
 
