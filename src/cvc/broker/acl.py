@@ -34,6 +34,17 @@ Agent-tier fields (optional, see tiers.py):
                                         # tokens; fetch/backup reject it.
     on_behalf_of: "alex"                # required for tier assistant (dual attribution)
     allow entries may set `physical: true` — for tier high such requests need human approval.
+
+Service self-credentials (D27, ACCESS-CLASSIFICATION.md §3.3) — the one exception to
+"no standing access to secret data":
+    allow:
+      - credential: "<uuid>"
+        self_credentials: true
+        owner_agent: "personal-dashboard"     # must equal this agent's id
+        purposes: ["dashboard-login-verify"]  # every purpose must be in SELF_CREDENTIAL_PURPOSES
+The entry is honoured only if owner_agent names the requesting agent, purposes is a
+non-empty subset of SELF_CREDENTIAL_PURPOSES (no "*"). Load rejects malformed entries;
+authorize() re-checks and denies. Every fetch is audited as "allow:self-credential".
 """
 from __future__ import annotations
 
@@ -65,6 +76,32 @@ _SENTINEL_CREDENTIALS = frozenset({
 })
 
 
+# Fixed purpose list for service self-credential fetches (D27). Adding a purpose is a
+# reviewed code change, never an ACL edit.
+SELF_CREDENTIAL_PURPOSES = frozenset({
+    "dashboard-login-verify",   # personal-dashboard: password hash + TOTP seed
+    "dashboard-confirm-hmac",   # personal-dashboard: confirm-token HMAC key
+})
+
+
+def self_credential_problem(agent_id: str, entry: dict) -> str | None:
+    """Why a `self_credentials: true` entry is invalid for agent_id, or None if valid."""
+    owner = str(entry.get("owner_agent") or "").strip()
+    if not owner:
+        return "self_credentials entry lacks owner_agent"
+    if owner != agent_id:
+        return f"self_credentials item owned by '{owner}', not '{agent_id}'"
+    purposes = entry.get("purposes") or []
+    if not purposes:
+        return "self_credentials entry has no purposes"
+    if "*" in purposes:
+        return "self_credentials entry may not use wildcard purpose"
+    bad = sorted(set(purposes) - SELF_CREDENTIAL_PURPOSES)
+    if bad:
+        return f"self_credentials purpose(s) not in fixed list: {', '.join(bad)}"
+    return None
+
+
 class Denied(Exception):
     """Raised when a request is not explicitly permitted."""
 
@@ -91,6 +128,14 @@ class Acl:
         for agent_id, agent in (data.get("agents") or {}).items():
             for entry in agent.get("allow", []) or []:
                 cred = entry.get("credential", "")
+                if entry.get("self_credentials"):
+                    problem = self_credential_problem(agent_id, entry)
+                    if problem:
+                        raise ValueError(f"ACL agent '{agent_id}': {problem}")
+                    if cred.lower() in _SENTINEL_CREDENTIALS:
+                        raise ValueError(
+                            f"ACL agent '{agent_id}': self_credentials cannot name a sentinel"
+                        )
                 if cred.lower() in _SENTINEL_CREDENTIALS:
                     continue
                 if not _UUID_RE.match(cred):
@@ -117,6 +162,14 @@ class Acl:
             if (entry.get("credential") or "").lower() != credential:
                 continue
             purposes = entry.get("purposes") or []
+            if entry.get("self_credentials"):
+                problem = self_credential_problem(agent_id, entry)
+                if problem:
+                    return Decision(False, problem)
+                if purpose not in purposes:
+                    return Decision(
+                        False, f"purpose '{purpose}' not permitted for {credential}")
+                return Decision(True, "self-credential allow")
             if "*" in purposes or purpose in purposes:
                 return Decision(True, "explicit allow")
             return Decision(False, f"purpose '{purpose}' not permitted for {credential}")
@@ -150,6 +203,14 @@ class Acl:
         for entry in agent.get("allow", []) or []:
             if (entry.get("credential") or "").lower() == credential:
                 return bool(entry.get("physical"))
+        return False
+
+    def is_self_credential(self, agent_id: str, credential: str) -> bool:
+        agent = self._agents.get(agent_id) or {}
+        credential = credential.lower()
+        for entry in agent.get("allow", []) or []:
+            if (entry.get("credential") or "").lower() == credential:
+                return bool(entry.get("self_credentials"))
         return False
 
     def allowed_credentials(self, agent_id: str) -> set[str]:

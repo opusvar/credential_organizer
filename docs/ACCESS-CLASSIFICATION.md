@@ -113,6 +113,45 @@ approval keeps a human on every trust-root operation and leaves an audit trail. 
 mediation also lets the broker *use* a secret without exposing it, which is the preferred
 mode.
 
+### 3.3 Exception: service self-credentials (D27)
+
+**Decision (owner-approved 2026-11-01):** a registered service may fetch **only its own
+authentication secrets**, **only at startup**, for a **fixed purpose**. This is the single
+exception to §3.2. It exists because a service that verifies logins or signs tokens cannot
+ask for human approval every time it starts.
+
+Conditions, all required:
+
+1. The secret authenticates *the service itself* (its own login check or signing key). It
+   never belongs to, or unlocks, another principal.
+2. The ACL allow entry sets `self_credentials: true` and `owner_agent: <the service's agent
+   id>`. The broker denies the fetch if `owner_agent` is missing or names anyone else.
+3. Every purpose is in the broker's fixed list (`SELF_CREDENTIAL_PURPOSES` in
+   `cvc/broker/acl.py`). `"*"` is rejected. Adding a purpose is a reviewed code change and
+   cannot be done by editing the ACL.
+4. The service fetches at startup and keeps the value in memory only. It does not fetch per
+   request and does not write the value to disk or logs.
+5. Every fetch is audited with outcome `allow:self-credential`.
+
+**Positive examples (allowed):**
+
+- personal-dashboard fetches `DASHBOARD_PASSWORD_HASH` and `DASHBOARD_TOTP_SECRET` at startup
+  with purpose `dashboard-login-verify`, to check the owner's dashboard login.
+- personal-dashboard fetches `DASHBOARD_CONFIRM_SECRET` at startup with purpose
+  `dashboard-confirm-hmac`, to sign and verify its own confirm tokens.
+- personal-dashboard reads `DASHBOARD_CVC_CREDENTIALS`, the path to its mapping file from
+  variable name to vault item id. The path is not a secret.
+
+**Negative examples (still need §3.2 per-use approval, or are refused):**
+
+- personal-dashboard fetching the owner's email password, a bank login, or any item whose
+  `owner_agent` is not `personal-dashboard`, even with a self-credential purpose.
+- Any agent using `self_credentials` with purpose `*` or a purpose outside the fixed list.
+- A service re-fetching its secret on every request, or caching it on disk.
+- An LLM agent claiming a vault item as "its own" to get standing access to user data.
+- Recovery-root secrets (vault master password, YubiKey PINs, CA keys); these are never
+  service self-credentials.
+
 ---
 
 ## 4. Examples per tier

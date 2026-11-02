@@ -624,9 +624,12 @@ def fetch_credential(
             and not approvals.consume(x_approval_id, x_agent_id, req.credential, req.purpose)):
         _deny(403, "physical action requires human approval")
 
-    # 3. Audit the grant BEFORE any secret leaves the system.
+    # 3. Audit the grant BEFORE any secret leaves the system. Self-credential fetches (D27)
+    #    get a distinct outcome so every one is visible in the audit trail.
+    outcome = ("allow:self-credential" if decision.reason == "self-credential allow"
+               else "allow")
     audit.record(AuditEvent(agent=x_agent_id, credential=req.credential,
-                            purpose=req.purpose, outcome="allow", on_behalf_of=obo))
+                            purpose=req.purpose, outcome=outcome, on_behalf_of=obo))
 
     # 4. Retrieve the requested field from the vault.
     try:
