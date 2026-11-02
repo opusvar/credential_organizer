@@ -54,6 +54,14 @@ roles:
     description: cvc-remind HA discovery + state (src/cvc/reminders/mqtt_publish.py)
     grants:
       - {system: ha-mqtt, topics: ["homeassistant/sensor/cvc_stale_credentials/config", "cvc/reminders/#"], access: write, action: write}
+  dashboard-startup:
+    description: personal-dashboard reads its API keys from the broker at startup
+    grants:
+      - {system: vaultwarden, credential: 22222222-3333-4444-5555-666666666666, purposes: [startup], data: private, action: read}
+  db-query-startup:
+    description: db-query reads its database credentials from the broker at startup
+    grants:
+      - {system: vaultwarden, credential: 33333333-4444-5555-6666-777777777777, purposes: [startup], data: private, action: read}
   worker-caller-read:
     description: Read-only calls to inference workers (documented only)
     grants:
@@ -76,12 +84,20 @@ agents:          # AI agents (broker principals). All agents live on tailnet `ag
     owner: alex
     sponsor: alex
   personal-dashboard:
-    roles: [worker-caller, backup-runner]
+    roles: [worker-caller, backup-runner, dashboard-startup]
     token_sha256: "1111111111111111111111111111111111111111111111111111111111111111"
     tier: high
     tailnet: agents
     owner: alex
+    sponsor: alex
     expires: 2027-01-31      # optional; after this date the agent gets allow: []
+  db-query:                 # see docs/AGENT-ONBOARDING.md
+    roles: [db-query-startup]
+    token_sha256: "2222222222222222222222222222222222222222222222222222222222222222"
+    tier: medium
+    tailnet: agents
+    owner: alex
+    sponsor: alex
   visitor-helper:           # guest-sponsored: requested medium, effective low
     roles: [worker-caller-read]
     tier: medium
