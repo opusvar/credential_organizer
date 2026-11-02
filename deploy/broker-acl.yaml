@@ -20,3 +20,16 @@ agents:
         purposes: ["smoke-test"]
       - credential: "backup"   # sentinel — not a UUID; backup trigger is not a credential fetch
         purposes: ["manual-trigger", "scheduled"]
+  # Placeholders for docs/AGENT-ONBOARDING.md — replace the UUIDs and hashes before use.
+  personal-dashboard:
+    tier: high
+    token_sha256: "1111111111111111111111111111111111111111111111111111111111111111"
+    allow:
+      - credential: "22222222-3333-4444-5555-666666666666"   # dashboard API keys
+        purposes: ["startup"]
+  db-query:
+    tier: medium
+    token_sha256: "2222222222222222222222222222222222222222222222222222222222222222"
+    allow:
+      - credential: "33333333-4444-5555-6666-777777777777"   # db-query database credentials
+        purposes: ["startup"]
