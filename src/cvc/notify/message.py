@@ -74,7 +74,8 @@ def approval_message(req, now: datetime, card_url: str, *, escalated: bool = Fal
         body = f"{agent}: {intent} ({mins} min left)"
     else:
         body = f"{GENERIC_TEXT} ({mins} min left)"
-    title = ("Escalated: " if escalated else "") + f"Approval needed [{req.urgency}]"
+    noun = "Escalation" if getattr(req, "kind", "approval") == "escalation" else "Approval"
+    title = ("Escalated: " if escalated else "") + f"{noun} needed [{req.urgency}]"
     return Message(title, body, prio, card_url, "warning" if prio == 5 else "bell")
 
 
