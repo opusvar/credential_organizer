@@ -58,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("person")
     p.add_argument("device")
     p.add_argument("--by", required=True)
-    v = sub.add_parser("revoke", help="revoke a bridge (person or owner)")
+    v = sub.add_parser("revoke", help="revoke a bridge (person, admin or owner)")
     v.add_argument("bridge")
     v.add_argument("--by", required=True)
     v.add_argument("--reason", default="revoked")

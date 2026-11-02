@@ -446,7 +446,9 @@ request|approve|deny|extend|promote|revoke|list|sweep` (`src/cvc/tempdevice/`). 
   never.
 - **Ending:** `cvc-access device set-cert` on a permanent device of the person (the normal
   onboard/enroll flow) promotes it and revokes the bridge; `cvc-tempdevice promote` does the
-  same by hand. Bridges auto-expire (`sweep`). The person or an owner can revoke at any time.
+  same by hand. Bridges auto-expire (`sweep`). The person, an admin or an owner can revoke at any time
+  (admins added 2026-11-01: revoking only reduces access; refusals and revokes are audited
+  with the actor).
   `cvc-access person remove` revokes all of the person's bridges. step-ca revoke commands are
   printed, never run.
 - **Visibility:** `/v1/whoami` returns `temp`, `temp_expires_at`, `temp_hours_left` for the

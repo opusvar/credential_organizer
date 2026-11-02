@@ -32,7 +32,7 @@ urn:cvc:temp:2026-11-04T12:00:00Z         # temp flag = expiry
 | Self-issue | owners and admins, with a physical YubiKey, when no lost-device report is active |
 | Limit | one open bridge per person |
 | Never | guests, agents, machines |
-| Ends | promote, auto-expiry, revoke (person or owner), offboarding |
+| Ends | promote, auto-expiry, revoke (person, admin or owner), offboarding |
 
 ## Flow
 
@@ -81,7 +81,8 @@ pipeline (dashboard card + ntfy). cvc never runs `step`: it prints the issue and
 - A cert with the temp flag and `urn:cvc:tier:owner`: step-ca's template refuses to issue it,
   and tier-gate would cap it at medium anyway.
 - `cvc-access device add kim-temp-1`: a bridge id can never become a permanent device.
-- Sam (admin, not owner) revokes Kim's bridge: only Kim or an owner may.
+- Robin (high, not admin) revokes Kim's bridge: only Kim, an admin or an owner may.
+  (Sam, an admin, may: revoking only reduces access. Decided 2026-11-01.)
 
 ## Audit
 

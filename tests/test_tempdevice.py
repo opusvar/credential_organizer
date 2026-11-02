@@ -400,15 +400,38 @@ def test_pending_extension_times_out(svc, clock):
     assert b is not None and b.pending_extension is None
 
 
-def test_revoke_by_person_or_owner_only(svc):
+def test_revoke_by_person_admin_or_owner_only(svc):
     b = _active(svc)
-    with pytest.raises(BridgeError, match="person or an owner"):
-        svc.revoke(b.id, "sam")
+    for who in ("robin", "lee", "gus", "nobody"):
+        with pytest.raises(BridgeError, match="person, an admin or an owner"):
+            svc.revoke(b.id, who)
     assert svc.revoke(b.id, "alex").status == "revoked"
     with pytest.raises(BridgeError, match="already"):
         svc.revoke(b.id, "kim")
     b2 = _active(svc)
     assert svc.revoke(b2.id, "kim", "found my phone").end_reason == "found my phone"
+
+
+def test_admin_revoke_succeeds_and_is_audited(svc, tmp_path):
+    b = _active(svc)
+    with pytest.raises(BridgeError):
+        svc.revoke(b.id, "robin")
+    r = svc.revoke(b.id, "sam", "lost phone found by IT")
+    assert r.status == "revoked" and r.ended_by == "sam"
+    rev = [x for x in audit_lines(tmp_path) if "revoke" in json.dumps(x)]
+    assert any("robin" in json.dumps(x) and "deny" in json.dumps(x) for x in rev)
+    assert any("sam" in json.dumps(x) and "lost phone found by IT" in json.dumps(x) for x in rev)
+
+
+def test_active_grants(svc):
+    assert svc.active_grants() == []
+    b = _active(svc)
+    g = svc.active_grants()
+    assert g == [{"kind": "tempdevice", "id": b.id, "person": "kim",
+                  "expires_at": b.expires_at,
+                  "revoke_hint": f"cvc-tempdevice revoke {b.id} --by <you>"}]
+    svc.revoke(b.id, "kim")
+    assert svc.active_grants() == []
 
 
 def test_revoke_all_offboard(svc):

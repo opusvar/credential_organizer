@@ -63,6 +63,9 @@ class AuthProof:
         return (self.password and self.passkey) or self.yubikey
 
 
+REVOKE_TIERS = frozenset({"admin", "owner"})   # besides the person themself
+
+
 def state_dir(path: str | os.PathLike | None = None) -> Path:
     return Path(os.path.expanduser(str(path or os.environ.get(STATE_ENV) or DEFAULT_DIR)))
 
@@ -335,12 +338,13 @@ class BridgeService:
 
     def revoke(self, bid: str, by: str, reason: str = "revoked", *, system: bool = False
                ) -> Bridge:
-        """The person or an owner may revoke at any time. `system` is for offboarding/promote."""
+        """The person, an admin or an owner may revoke at any time (revoking only reduces
+        access). `system` is for offboarding/promote."""
         with self.store.locked() as items:
             b = self._get(items, bid)
-            if not system and by != b.person and self._tier_of(by) != "owner":
-                self.store.record(by, b, "revoke", "deny:not person or owner")
-                raise BridgeError("only the person or an owner can revoke a bridge")
+            if not system and by != b.person and self._tier_of(by) not in REVOKE_TIERS:
+                self.store.record(by, b, "revoke", "deny:not person, admin or owner")
+                raise BridgeError("only the person, an admin or an owner can revoke a bridge")
             if not b.is_open:
                 raise BridgeError(f"{bid} is already {b.status}")
             was_pending = b.status == "pending"
@@ -427,6 +431,13 @@ class BridgeService:
         return sorted((b for b in items.values()
                        if (person is None or b.person == person)
                        and (not open_only or b.is_open)), key=lambda b: b.requested_at)
+
+    def active_grants(self) -> list[dict]:
+        """Read-only, uniform view of open bridges for a unified `cvc-grants` listing."""
+        return [{"kind": "tempdevice", "id": b.id, "person": b.person,
+                 "expires_at": b.expires_at,
+                 "revoke_hint": f"cvc-tempdevice revoke {b.id} --by <you>"}
+                for b in self.list() if b.status == "active"]
 
     def active_for(self, person: str) -> Bridge | None:
         return next((b for b in self.list(person=person) if b.status == "active"), None)
