@@ -415,3 +415,6 @@ OAuth scopes are registry systems labelled per D16; the broker holds refresh tok
 
 ## D26 — Agent gateway ("Clear for agents")  **[DECIDED 2026-11-01]**
 Enroll once, fast lane via brokered short-lived scoped tokens, screening still applies, per-task boarding pass, full dual-attribution audit; exposed as MCP server and HTTP credential proxy. See [AGENT-GATEWAY.md](AGENT-GATEWAY.md).
+
+## D27 — Service self-credentials  **[DECIDED 2026-11-01]**
+Exception to ACCESS-CLASSIFICATION §3.2. A registered service may fetch only its own authentication secrets (login hash, TOTP seed, HMAC key), only at startup, for a purpose in the broker's fixed list. ACL entry needs `self_credentials: true` and `owner_agent` equal to the requesting agent; wildcard purposes are rejected; every fetch is audited as `allow:self-credential`. Never covers another principal's secrets. First user: personal-dashboard (`dashboard-login-verify`, `dashboard-confirm-hmac`; also reads `DASHBOARD_CVC_CREDENTIALS`). See [ACCESS-CLASSIFICATION.md](ACCESS-CLASSIFICATION.md) §3.3.
