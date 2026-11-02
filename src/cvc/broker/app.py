@@ -24,6 +24,7 @@ import sys
 import threading
 import time
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -978,13 +979,31 @@ def whoami(
     x_cvc_person: str | None = Header(None, max_length=64),
     x_cvc_tier: str | None = Header(None, max_length=32),
     x_authentik_username: str | None = Header(None, max_length=128),
+    x_cvc_temp: str | None = Header(None, max_length=8),
+    x_cvc_temp_expires: str | None = Header(None, max_length=40),
     x_real_ip: str | None = Header(None, max_length=64),
     x_forwarded_for: str | None = Header(None, max_length=512),
 ) -> dict:
     _require_tailnet_client(x_real_ip, x_forwarded_for)
     person, tier = _tiergate_identity(x_cvc_person, x_cvc_tier)
+    temp = (x_cvc_temp or "").strip() == "1"
+    expires, hours_left = None, None
+    if temp:
+        # D27: a temp device is capped at medium even if an upstream forgot to cap it.
+        from cvc.tempdevice.model import RANK, capped_tier
+        tier = capped_tier(tier) if tier in RANK else tier
+        try:
+            from cvc.tempdevice.model import iso, parse_ts
+            end = parse_ts((x_cvc_temp_expires or "").strip())
+            if end.tzinfo is None:
+                raise ValueError
+            expires = iso(end)
+            hours_left = max(0, int((end - datetime.now(UTC)).total_seconds() // 3600))
+        except ValueError:
+            expires, hours_left = None, None
     return {"person": person, "tier": tier,
-            "passkey": bool(x_authentik_username) and x_authentik_username == person}
+            "passkey": bool(x_authentik_username) and x_authentik_username == person,
+            "temp": temp, "temp_expires_at": expires, "temp_hours_left": hours_left}
 
 
 @app.post("/v1/approvals/{approval_id}/decide", tags=["approvals"],
@@ -1000,8 +1019,12 @@ def decide(
     svc: ApprovalService = Depends(_approval_service),  # noqa: B008
     nonces: _NonceStore = Depends(_nonces),  # noqa: B008
     if_match: str | None = Header(None, max_length=128),
+    x_cvc_temp: str | None = Header(None, max_length=8),
 ) -> JSONResponse:
     person, tier = _tiergate_identity(x_cvc_person, x_cvc_tier)
+    if (x_cvc_temp or "").strip() == "1":      # D27: temp device never decides above medium
+        from cvc.tempdevice.model import RANK, capped_tier
+        tier = capped_tier(tier) if tier in RANK else tier
     insp = approvals_inspect.attach(svc)
     try:
         version = _parse_if_match(if_match, approval_id)

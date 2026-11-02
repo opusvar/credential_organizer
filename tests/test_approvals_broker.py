@@ -158,7 +158,32 @@ def test_nonce_single_use_and_person_bound(env):
 def test_whoami(env):
     client, _, _ = env
     r = client.get("/v1/whoami", headers=_id("nat", "owner", "nat"))
-    assert r.json() == {"person": "nat", "tier": "owner", "passkey": True}
+    assert r.json() == {"person": "nat", "tier": "owner", "passkey": True, "temp": False,
+                        "temp_expires_at": None, "temp_hours_left": None}
+
+
+def test_whoami_temp_device_banner_and_cap(env):
+    """D27: the dashboard banner reads temp + expiry; the tier is capped at medium."""
+    import datetime as _dt
+    client, _, _ = env
+    end = (_dt.datetime.now(_dt.UTC) + _dt.timedelta(hours=30, minutes=5)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ")
+    r = client.get("/v1/whoami", headers={**_id("nat", "owner", "nat"), "X-Cvc-Temp": "1",
+                                          "X-Cvc-Temp-Expires": end}).json()
+    assert r["temp"] is True and r["tier"] == "medium"
+    assert r["temp_expires_at"] == end and r["temp_hours_left"] == 30
+    bad = client.get("/v1/whoami", headers={**_id("bo", "low"), "X-Cvc-Temp": "1",
+                                            "X-Cvc-Temp-Expires": "garbage"}).json()
+    assert bad["temp"] is True and bad["tier"] == "low" and bad["temp_hours_left"] is None
+
+
+def test_decide_from_temp_device_is_capped(env):
+    """An owner on a temp device decides as medium, so a green (high) approval is refused."""
+    client, _, _ = env
+    aid = _create(client)["id"]
+    h = {**_id("nat", "owner", "nat"), "X-Cvc-Temp": "1"}
+    r = _decide(client, aid, "approve", h)
+    assert r.status_code == 403
 
 
 def test_cors_origin_and_json_only(env):

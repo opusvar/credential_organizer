@@ -33,15 +33,20 @@ def create_app(config: Config) -> FastAPI:
         d = decide(config, host, h.get(CERT_HEADER), h.get(AUTHENTIK_HEADER))
         ident = d.identity
         log.info(
-            "host=%s allowed=%s reason=%s person=%s tier=%s device=%s",
+            "host=%s allowed=%s reason=%s person=%s tier=%s device=%s temp=%s",
             host, d.allowed, d.reason,
             ident and ident.person, ident and ident.tier, ident and ident.device,
+            ident and ident.temp,
         )
         if not d.allowed:
             return Response(status_code=403, content="forbidden\n", media_type="text/plain")
         headers = {"X-Cvc-Person": ident.person, "X-Cvc-Tier": ident.tier}
         if ident.device:
             headers["X-Cvc-Device"] = ident.device
+        if ident.temp:
+            headers["X-Cvc-Temp"] = "1"
+            if ident.temp_expires:
+                headers["X-Cvc-Temp-Expires"] = ident.temp_expires
         return Response(status_code=200, headers=headers)
 
     return app

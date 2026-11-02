@@ -39,6 +39,8 @@ spec:
       - X-Cvc-Person
       - X-Cvc-Tier
       - X-Cvc-Device
+      - X-Cvc-Temp
+      - X-Cvc-Temp-Expires
 ---
 # Example route for a high-tier host.
 apiVersion: traefik.io/v1alpha1
